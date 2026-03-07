@@ -8,6 +8,8 @@ import {
   Search,
   SquarePen,
   Network,
+  Brain,
+  Code2,
   Settings,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
@@ -97,6 +99,8 @@ export function Sidebar() {
 
         <SidebarSection label="Company">
           <SidebarNavItem to="/org" label="Org" icon={Network} />
+          <SidebarNavItem to="/cognitive-blueprint" label="Cognitive Blueprint" icon={Brain} />
+          <SidebarNavItem to="/developer-mode" label="Developer Mode" icon={Code2} />
           <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
           <SidebarNavItem to="/activity" label="Activity" icon={History} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />

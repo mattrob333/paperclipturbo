@@ -8,7 +8,10 @@ export type {
   AdapterEnvironmentTestStatus,
   AdapterEnvironmentCheck,
   AdapterEnvironmentTestResult,
+  AgentSetupState,
+  AgentSetupStateInfo,
 } from "./agent.js";
+export { AGENT_SETUP_STATES, deriveAgentSetupState } from "./agent.js";
 export type { AssetImage } from "./asset.js";
 export type { Project, ProjectGoalRef, ProjectWorkspace } from "./project.js";
 export type {
@@ -70,3 +73,48 @@ export type {
   CompanyPortabilityImportResult,
   CompanyPortabilityExportRequest,
 } from "./company-portability.js";
+export type {
+  FileNode,
+  FileContent,
+  WorkspaceTree,
+  WorkspaceError,
+} from "./workspace.js";
+export type {
+  AgentRuntimeProfile,
+  CronJobInfo,
+  SessionState,
+  RecentRunSummary,
+  ValidationItem,
+  ConfigDiffResult,
+} from "./runtime.js";
+export {
+  CAPABILITY_TAGS,
+  HEALTH_STATUSES,
+  CONFIDENCE_LEVELS,
+  SKILL_CHAIN_STEP_TYPES,
+  TOOL_PERMISSION_LEVELS,
+  OWNERSHIP_MODES,
+  MODEL_TIERS,
+  MEMORY_SOURCE_TYPES,
+} from "./cognitive.js";
+export type {
+  CapabilityTag,
+  HealthStatus,
+  ConfidenceLevel,
+  SkillChainStepType,
+  ToolPermissionLevel,
+  OwnershipMode,
+  ModelTier,
+  MemorySourceType,
+  AgentCognitiveProfile,
+  SkillChainStep,
+  SkillChain,
+  ToolPolicy,
+  DelegationPolicy,
+  RuntimeProfile,
+  AuditDriftReport,
+  MemorySource,
+  CognitiveHealth,
+  DashboardMetrics,
+  AgentCognitiveData,
+} from "./cognitive.js";

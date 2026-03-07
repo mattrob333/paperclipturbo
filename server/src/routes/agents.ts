@@ -2,7 +2,7 @@ import { Router, type Request } from "express";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable, companies, heartbeatRuns } from "@paperclipai/db";
+import { agents as agentsTable, agentConfigRevisions, agentTaskSessions, companies, heartbeatRuns } from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
   createAgentKeySchema,
@@ -26,6 +26,7 @@ import {
   issueService,
   logActivity,
   secretService,
+  validationService,
 } from "../services/index.js";
 import { conflict, forbidden, notFound, unprocessable } from "../errors.js";
 import { assertBoard, assertCompanyAccess, getActorInfo } from "./authz.js";
@@ -1176,6 +1177,11 @@ export function agentRoutes(db: Db) {
       return;
     }
 
+    if (agent.status === "terminated") {
+      res.status(409).json({ error: "Cannot invoke a terminated agent" });
+      return;
+    }
+
     const run = await heartbeat.invoke(
       id,
       "on_demand",
@@ -1444,6 +1450,199 @@ export function agentRoutes(db: Db) {
       agentId: agent.id,
       agentName: agent.name,
       adapterType: agent.adapterType,
+    });
+  });
+
+  // --- Runtime profile endpoint ---
+  router.get("/companies/:companyId/agents/:id/runtime", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const id = await normalizeAgentReference(req, req.params.id as string);
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    if (agent.companyId !== companyId) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const adapterConfig = asRecord(agent.adapterConfig) ?? {};
+    const runtimeConfig = asRecord(agent.runtimeConfig) ?? {};
+    const heartbeatConfig = asRecord(runtimeConfig.heartbeat) ?? {};
+
+    const model = asNonEmptyString(adapterConfig.model);
+    const modelTier = asNonEmptyString(adapterConfig.modelTier);
+    const sandboxMode = adapterConfig.dangerouslyBypassApprovalsAndSandbox !== true
+      && adapterConfig.dangerouslyBypassSandbox !== true;
+
+    const heartbeatEnabled = heartbeatConfig.enabled !== false;
+    const heartbeatInterval = typeof heartbeatConfig.intervalSec === "number"
+      ? heartbeatConfig.intervalSec * 1000
+      : 0;
+
+    // Get runtime state
+    const runtimeState = await heartbeat.getRuntimeState(id);
+
+    // Get active task session
+    const latestTaskSession = await db
+      .select()
+      .from(agentTaskSessions)
+      .where(and(eq(agentTaskSessions.companyId, companyId), eq(agentTaskSessions.agentId, id)))
+      .orderBy(desc(agentTaskSessions.updatedAt))
+      .limit(1)
+      .then((rows) => rows[0] ?? null);
+
+    const sessionState = latestTaskSession
+      ? {
+          taskKey: latestTaskSession.taskKey,
+          sessionDisplayId: latestTaskSession.sessionDisplayId,
+          status: latestTaskSession.lastError ? "error" : "active",
+          startedAt: latestTaskSession.createdAt ? new Date(latestTaskSession.createdAt).toISOString() : null,
+          lastRunId: latestTaskSession.lastRunId,
+          lastError: latestTaskSession.lastError,
+        }
+      : null;
+
+    // Get recent runs
+    const recentRuns = await db
+      .select({
+        id: heartbeatRuns.id,
+        status: heartbeatRuns.status,
+        invocationSource: heartbeatRuns.invocationSource,
+        triggerDetail: heartbeatRuns.triggerDetail,
+        startedAt: heartbeatRuns.startedAt,
+        finishedAt: heartbeatRuns.finishedAt,
+      })
+      .from(heartbeatRuns)
+      .where(and(eq(heartbeatRuns.agentId, id), eq(heartbeatRuns.companyId, companyId)))
+      .orderBy(desc(heartbeatRuns.createdAt))
+      .limit(10);
+
+    // Determine environment status
+    let environmentStatus = "unknown";
+    if (runtimeState?.lastRunStatus === "succeeded") {
+      environmentStatus = "healthy";
+    } else if (runtimeState?.lastRunStatus === "failed") {
+      environmentStatus = "error";
+    } else if (agent.status === "running") {
+      environmentStatus = "running";
+    } else if (agent.status === "idle") {
+      environmentStatus = "idle";
+    }
+
+    res.json({
+      adapter: agent.adapterType,
+      model,
+      modelTier,
+      heartbeatEnabled,
+      heartbeatInterval,
+      lastHeartbeatAt: agent.lastHeartbeatAt
+        ? new Date(agent.lastHeartbeatAt).toISOString()
+        : null,
+      cronJobs: [],
+      sandboxMode,
+      accessProfile: agent.role === "ceo" ? "full" : "standard",
+      environmentStatus,
+      sessionState,
+      recentRuns: recentRuns.map((run) => ({
+        id: run.id,
+        status: run.status,
+        invocationSource: run.invocationSource,
+        triggerDetail: run.triggerDetail,
+        startedAt: run.startedAt ? new Date(run.startedAt).toISOString() : null,
+        finishedAt: run.finishedAt ? new Date(run.finishedAt).toISOString() : null,
+      })),
+    });
+  });
+
+  // --- Validation endpoint ---
+  router.get("/companies/:companyId/agents/:id/validation", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const id = await normalizeAgentReference(req, req.params.id as string);
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    if (agent.companyId !== companyId) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const validation = validationService(db);
+    const items = await validation.validateAgent(companyId, id);
+    res.json(items);
+  });
+
+  // --- Config diff endpoint ---
+  router.get("/companies/:companyId/agents/:id/config-diff", async (req, res) => {
+    const companyId = req.params.companyId as string;
+    assertCompanyAccess(req, companyId);
+    const id = await normalizeAgentReference(req, req.params.id as string);
+    const agent = await svc.getById(id);
+    if (!agent) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+    if (agent.companyId !== companyId) {
+      res.status(404).json({ error: "Agent not found" });
+      return;
+    }
+
+    const revisionId = asNonEmptyString(req.query.revisionId as string | undefined);
+
+    // If a specific revision was requested, get that one
+    if (revisionId) {
+      const revision = await svc.getConfigRevision(id, revisionId);
+      if (!revision) {
+        res.status(404).json({ error: "Revision not found" });
+        return;
+      }
+      res.json({
+        currentRevisionId: revision.id,
+        previousRevisionId: revision.rolledBackFromRevisionId,
+        changedKeys: revision.changedKeys,
+        before: redactRevisionSnapshot(revision.beforeConfig),
+        after: redactRevisionSnapshot(revision.afterConfig),
+        createdAt: revision.createdAt ? new Date(revision.createdAt).toISOString() : null,
+        source: revision.source,
+      });
+      return;
+    }
+
+    // Otherwise, get the most recent revision
+    const revisions = await db
+      .select()
+      .from(agentConfigRevisions)
+      .where(and(eq(agentConfigRevisions.agentId, id), eq(agentConfigRevisions.companyId, companyId)))
+      .orderBy(desc(agentConfigRevisions.createdAt))
+      .limit(1);
+
+    const latestRevision = revisions[0] ?? null;
+    if (!latestRevision) {
+      res.json({
+        currentRevisionId: null,
+        previousRevisionId: null,
+        changedKeys: [],
+        before: {},
+        after: {},
+        createdAt: null,
+        source: null,
+      });
+      return;
+    }
+
+    res.json({
+      currentRevisionId: latestRevision.id,
+      previousRevisionId: latestRevision.rolledBackFromRevisionId,
+      changedKeys: latestRevision.changedKeys,
+      before: redactRevisionSnapshot(latestRevision.beforeConfig),
+      after: redactRevisionSnapshot(latestRevision.afterConfig),
+      createdAt: latestRevision.createdAt ? new Date(latestRevision.createdAt).toISOString() : null,
+      source: latestRevision.source,
     });
   });
 

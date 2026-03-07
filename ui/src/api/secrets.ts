@@ -1,6 +1,17 @@
 import type { CompanySecret, SecretProviderDescriptor, SecretProvider } from "@paperclipai/shared";
 import { api } from "./client";
 
+export interface SecretUsageEntry {
+  agentId: string;
+  agentName: string;
+  agentStatus: string;
+}
+
+export interface SecretUsage {
+  secretId: string;
+  usedBy: SecretUsageEntry[];
+}
+
 export const secretsApi = {
   list: (companyId: string) => api.get<CompanySecret[]>(`/companies/${companyId}/secrets`),
   providers: (companyId: string) =>
@@ -22,4 +33,5 @@ export const secretsApi = {
     data: { name?: string; description?: string | null; externalRef?: string | null },
   ) => api.patch<CompanySecret>(`/secrets/${id}`, data),
   remove: (id: string) => api.delete<{ ok: true }>(`/secrets/${id}`),
+  usage: (id: string) => api.get<SecretUsage>(`/secrets/${id}/usage`),
 };

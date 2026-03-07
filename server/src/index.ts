@@ -57,6 +57,18 @@ type EmbeddedPostgresCtor = new (opts: {
 }) => EmbeddedPostgresInstance;
 
 const config = loadConfig();
+logger.info(
+  {
+    deploymentMode: config.deploymentMode,
+    deploymentExposure: config.deploymentExposure,
+    databaseMode: config.databaseMode,
+    host: config.host,
+    port: config.port,
+    serveUi: config.serveUi,
+    uiDevMiddleware: config.uiDevMiddleware,
+  },
+  "[startup] Configuration loaded",
+);
 if (process.env.PAPERCLIP_SECRETS_PROVIDER === undefined) {
   process.env.PAPERCLIP_SECRETS_PROVIDER = config.secretsProvider;
 }
@@ -83,18 +95,23 @@ function formatPendingMigrationSummary(migrations: string[]): string {
 
 async function promptApplyMigrations(migrations: string[]): Promise<boolean> {
   if (process.env.PAPERCLIP_MIGRATION_PROMPT === "never") return false;
-  if (process.env.PAPERCLIP_MIGRATION_AUTO_APPLY === "true") return true;
-  if (!stdin.isTTY || !stdout.isTTY) return true;
-
-  const prompt = createInterface({ input: stdin, output: stdout });
-  try {
-    const answer = (await prompt.question(
-      `Apply pending migrations (${formatPendingMigrationSummary(migrations)}) now? (y/N): `,
-    )).trim().toLowerCase();
-    return answer === "y" || answer === "yes";
-  } finally {
-    prompt.close();
+  // Auto-apply by default; only prompt when explicitly requested
+  if (process.env.PAPERCLIP_MIGRATION_AUTO_APPLY === "false") {
+    if (!stdin.isTTY || !stdout.isTTY) {
+      logger.info("Non-interactive environment detected; auto-applying migrations");
+      return true;
+    }
+    const prompt = createInterface({ input: stdin, output: stdout });
+    try {
+      const answer = (await prompt.question(
+        `Apply pending migrations (${formatPendingMigrationSummary(migrations)}) now? (y/N): `,
+      )).trim().toLowerCase();
+      return answer === "y" || answer === "yes";
+    } finally {
+      prompt.close();
+    }
   }
+  return true;
 }
 
 type EnsureMigrationsOptions = {
@@ -106,51 +123,54 @@ async function ensureMigrations(
   label: string,
   opts?: EnsureMigrationsOptions,
 ): Promise<MigrationSummary> {
-  const autoApply = opts?.autoApply === true;
+  const autoApply = opts?.autoApply !== false;
+  logger.info({ label, autoApply }, `[migrations] Inspecting migration state for ${label}`);
   let state = await inspectMigrations(connectionString);
+  logger.info({ label, status: state.status, reason: (state as any).reason ?? null }, `[migrations] Current state for ${label}`);
+
   if (state.status === "needsMigrations" && state.reason === "pending-migrations") {
+    logger.info({ label }, `[migrations] Attempting journal reconciliation for ${label}`);
     const repair = await reconcilePendingMigrationHistory(connectionString);
     if (repair.repairedMigrations.length > 0) {
       logger.warn(
         { repairedMigrations: repair.repairedMigrations },
-        `${label} had drifted migration history; repaired migration journal entries from existing schema state.`,
+        `[migrations] ${label} had drifted migration history; repaired ${repair.repairedMigrations.length} journal entries from existing schema state`,
       );
       state = await inspectMigrations(connectionString);
-      if (state.status === "upToDate") return "already applied";
+      if (state.status === "upToDate") {
+        logger.info({ label }, `[migrations] ${label} is now up to date after repair`);
+        return "already applied";
+      }
     }
   }
-  if (state.status === "upToDate") return "already applied";
+  if (state.status === "upToDate") {
+    logger.info({ label }, `[migrations] ${label} is up to date; no migrations needed`);
+    return "already applied";
+  }
   if (state.status === "needsMigrations" && state.reason === "no-migration-journal-non-empty-db") {
     logger.warn(
       { tableCount: state.tableCount },
-      `${label} has existing tables but no migration journal. Run migrations manually to sync schema.`,
+      `[migrations] ${label} has existing tables but no migration journal`,
     );
-    const apply = autoApply ? true : await promptApplyMigrations(state.pendingMigrations);
-    if (!apply) {
-      logger.warn(
-        { pendingMigrations: state.pendingMigrations },
-        `${label} has pending migrations; continuing without applying. Run pnpm db:migrate to apply before startup.`,
-      );
-      return "pending migrations skipped";
-    }
-
-    logger.info({ pendingMigrations: state.pendingMigrations }, `Applying ${state.pendingMigrations.length} pending migrations for ${label}`);
-    await applyPendingMigrations(connectionString);
-    return "applied (pending migrations)";
   }
 
+  const pendingCount = state.pendingMigrations.length;
   const apply = autoApply ? true : await promptApplyMigrations(state.pendingMigrations);
   if (!apply) {
     logger.warn(
       { pendingMigrations: state.pendingMigrations },
-      `${label} has pending migrations; continuing without applying. Run pnpm db:migrate to apply before startup.`,
+      `[migrations] ${label} has ${pendingCount} pending migrations; skipped. Run pnpm db:migrate to apply before startup.`,
     );
     return "pending migrations skipped";
   }
 
-  logger.info({ pendingMigrations: state.pendingMigrations }, `Applying ${state.pendingMigrations.length} pending migrations for ${label}`);
+  logger.info(
+    { pendingMigrations: state.pendingMigrations },
+    `[migrations] Applying ${pendingCount} pending migrations for ${label}`,
+  );
   await applyPendingMigrations(connectionString);
-  return "applied (pending migrations)";
+  logger.info({ label, count: pendingCount }, `[migrations] Successfully applied ${pendingCount} migrations for ${label}`);
+  return state.reason === "no-migration-journal-empty-db" ? "applied (empty database)" : "applied (pending migrations)";
 }
 
 function isLoopbackHost(host: string): boolean {
@@ -227,13 +247,15 @@ let startupDbInfo:
   | { mode: "external-postgres"; connectionString: string }
   | { mode: "embedded-postgres"; dataDir: string; port: number };
 if (config.databaseUrl) {
+  logger.info("[startup] DB init path: external PostgreSQL (DATABASE_URL provided)");
   migrationSummary = await ensureMigrations(config.databaseUrl, "PostgreSQL");
 
   db = createDb(config.databaseUrl);
-  logger.info("Using external PostgreSQL via DATABASE_URL/config");
+  logger.info("[startup] External PostgreSQL connection established");
   activeDatabaseConnectionString = config.databaseUrl;
   startupDbInfo = { mode: "external-postgres", connectionString: config.databaseUrl };
 } else {
+  logger.info("[startup] DB init path: embedded PostgreSQL (no DATABASE_URL set)");
   const moduleName = "embedded-postgres";
   let EmbeddedPostgres: EmbeddedPostgresCtor;
   try {
@@ -358,13 +380,11 @@ if (config.databaseUrl) {
   }
 
   const embeddedConnectionString = `postgres://paperclip:paperclip@127.0.0.1:${port}/paperclip`;
-  const shouldAutoApplyFirstRunMigrations = !clusterAlreadyInitialized || dbStatus === "created";
-  if (shouldAutoApplyFirstRunMigrations) {
-    logger.info("Detected first-run embedded PostgreSQL setup; applying pending migrations automatically");
+  const isFirstRun = !clusterAlreadyInitialized || dbStatus === "created";
+  if (isFirstRun) {
+    logger.info("[startup] First-run embedded PostgreSQL setup detected");
   }
-  migrationSummary = await ensureMigrations(embeddedConnectionString, "Embedded PostgreSQL", {
-    autoApply: shouldAutoApplyFirstRunMigrations,
-  });
+  migrationSummary = await ensureMigrations(embeddedConnectionString, "Embedded PostgreSQL");
 
   db = createDb(embeddedConnectionString);
   logger.info("Embedded PostgreSQL ready");
@@ -398,6 +418,10 @@ if (config.deploymentMode === "authenticated") {
 }
 
 let authReady = config.deploymentMode === "local_trusted";
+logger.info(
+  { deploymentMode: config.deploymentMode, authReady },
+  `[startup] Auth init: ${config.deploymentMode === "local_trusted" ? "local_trusted mode (no login required)" : "authenticated mode (session required)"}`,
+);
 let betterAuthHandler: RequestHandler | undefined;
 let resolveSession:
   | ((req: ExpressRequest) => Promise<BetterAuthSessionResult | null>)
@@ -406,7 +430,9 @@ let resolveSessionFromHeaders:
   | ((headers: Headers) => Promise<BetterAuthSessionResult | null>)
   | undefined;
 if (config.deploymentMode === "local_trusted") {
+  logger.info("[startup] Ensuring local-board principal exists for local_trusted mode");
   await ensureLocalTrustedBoardPrincipal(db as any);
+  logger.info("[startup] local-board principal ready");
 }
 if (config.deploymentMode === "authenticated") {
   const {
@@ -450,6 +476,7 @@ if (config.deploymentMode === "authenticated") {
 }
 
 const uiMode = config.uiDevMiddleware ? "vite-dev" : config.serveUi ? "static" : "none";
+logger.info({ uiMode }, `[startup] UI mode: ${uiMode}`);
 const storageService = createStorageServiceFromConfig(config);
 const app = await createApp(db as any, {
   uiMode,

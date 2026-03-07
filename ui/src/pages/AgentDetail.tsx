@@ -58,6 +58,16 @@ import { Input } from "@/components/ui/input";
 import { AgentIcon, AgentIconPicker } from "../components/AgentIconPicker";
 import { isUuidLike, type Agent, type HeartbeatRun, type HeartbeatRunEvent, type AgentRuntimeState, type LiveEvent } from "@paperclipai/shared";
 import { agentRouteRef } from "../lib/utils";
+import { getAgentCognitiveData } from "../lib/mockCognitiveData";
+import { OverviewTab } from "../components/agent-detail/OverviewTab";
+import { CognitiveOSTab } from "../components/agent-detail/CognitiveOSTab";
+import { SkillChainsTab } from "../components/agent-detail/SkillChainsTab";
+import { ToolsPoliciesTab } from "../components/agent-detail/ToolsPoliciesTab";
+import { DelegationTab } from "../components/agent-detail/DelegationTab";
+import { MemoryContextTab } from "../components/agent-detail/MemoryContextTab";
+import { RuntimeTab } from "../components/agent-detail/RuntimeTab";
+import { AuditDriftTab } from "../components/agent-detail/AuditDriftTab";
+import { ActivityTab } from "../components/agent-detail/ActivityTab";
 
 const runStatusIcons: Record<string, { icon: typeof CheckCircle2; color: string }> = {
   succeeded: { icon: CheckCircle2, color: "text-green-600 dark:text-green-400" },
@@ -172,11 +182,28 @@ function scrollToContainerBottom(container: ScrollContainer, behavior: ScrollBeh
   container.scrollTo({ top: container.scrollHeight, behavior });
 }
 
-type AgentDetailView = "overview" | "configure" | "runs";
+type AgentDetailView =
+  | "overview"
+  | "cognitive"
+  | "skills"
+  | "tools"
+  | "delegation"
+  | "memory"
+  | "runtime"
+  | "audit"
+  | "configure"
+  | "activity";
 
 function parseAgentDetailView(value: string | null): AgentDetailView {
   if (value === "configure" || value === "configuration") return "configure";
-  if (value === "runs") return value;
+  if (value === "runs" || value === "activity") return "activity";
+  if (value === "cognitive") return "cognitive";
+  if (value === "skills") return "skills";
+  if (value === "tools") return "tools";
+  if (value === "delegation") return "delegation";
+  if (value === "memory") return "memory";
+  if (value === "runtime") return "runtime";
+  if (value === "audit") return "audit";
   return "overview";
 }
 
@@ -240,7 +267,7 @@ export function AgentDetail() {
   const navigate = useNavigate();
   const [actionError, setActionError] = useState<string | null>(null);
   const [moreOpen, setMoreOpen] = useState(false);
-  const activeView = urlRunId ? "runs" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
+  const activeView = urlRunId ? "activity" as AgentDetailView : parseAgentDetailView(urlTab ?? null);
   const [configDirty, setConfigDirty] = useState(false);
   const [configSaving, setConfigSaving] = useState(false);
   const saveConfigActionRef = useRef<(() => void) | null>(null);
@@ -401,12 +428,23 @@ export function AgentDetail() {
     } else {
       crumbs.push({ label: agentName, href: `/agents/${canonicalAgentRef}` });
       if (urlRunId) {
-        crumbs.push({ label: "Runs", href: `/agents/${canonicalAgentRef}/runs` });
+        crumbs.push({ label: "Activity", href: `/agents/${canonicalAgentRef}/activity` });
         crumbs.push({ label: `Run ${urlRunId.slice(0, 8)}` });
       } else if (activeView === "configure") {
         crumbs.push({ label: "Configure" });
-      } else if (activeView === "runs") {
-        crumbs.push({ label: "Runs" });
+      } else if (activeView === "activity") {
+        crumbs.push({ label: "Activity" });
+      } else if (activeView !== "overview") {
+        const tabLabels: Record<string, string> = {
+          cognitive: "Cognitive OS",
+          skills: "Skill Chains",
+          tools: "Tools & Policies",
+          delegation: "Delegation",
+          memory: "Memory & Context",
+          runtime: "Runtime",
+          audit: "Audit & Drift",
+        };
+        crumbs.push({ label: tabLabels[activeView] ?? activeView });
       }
     }
     setBreadcrumbs(crumbs);
@@ -621,18 +659,175 @@ export function AgentDetail() {
         </div>
       )}
 
-      {/* View content */}
+      {/* Tab Navigation */}
+      <AgentDetailTabs
+        activeView={activeView}
+        agentRouteId={canonicalAgentRef}
+        agent={agent}
+        runs={heartbeats ?? []}
+        assignedIssues={assignedIssues}
+        runtimeState={runtimeState}
+        reportsToAgent={reportsToAgent ?? null}
+        directReports={directReports}
+        resolvedCompanyId={resolvedCompanyId}
+        configDirty={configDirty}
+        setConfigDirty={setConfigDirty}
+        setSaveConfigAction={setSaveConfigAction}
+        setCancelConfigAction={setCancelConfigAction}
+        configSaving={configSaving}
+        setConfigSaving={setConfigSaving}
+        updatePermissions={updatePermissions}
+        urlRunId={urlRunId ?? null}
+      />
+    </div>
+  );
+}
+
+/* ---- Tab navigation + content ---- */
+
+const TAB_ITEMS: { value: AgentDetailView; label: string }[] = [
+  { value: "overview", label: "Overview" },
+  { value: "cognitive", label: "Cognitive OS" },
+  { value: "skills", label: "Skill Chains" },
+  { value: "tools", label: "Tools & Policies" },
+  { value: "delegation", label: "Delegation" },
+  { value: "memory", label: "Memory" },
+  { value: "runtime", label: "Runtime" },
+  { value: "audit", label: "Audit & Drift" },
+  { value: "configure", label: "Configure" },
+  { value: "activity", label: "Activity" },
+];
+
+function AgentDetailTabs({
+  activeView,
+  agentRouteId,
+  agent,
+  runs,
+  assignedIssues,
+  runtimeState,
+  reportsToAgent,
+  directReports,
+  resolvedCompanyId,
+  configDirty,
+  setConfigDirty,
+  setSaveConfigAction,
+  setCancelConfigAction,
+  configSaving,
+  setConfigSaving,
+  updatePermissions,
+  urlRunId,
+}: {
+  activeView: AgentDetailView;
+  agentRouteId: string;
+  agent: Agent;
+  runs: HeartbeatRun[];
+  assignedIssues: { id: string; title: string; status: string; priority: string; identifier?: string | null; createdAt: Date }[];
+  runtimeState?: AgentRuntimeState;
+  reportsToAgent: Agent | null;
+  directReports: Agent[];
+  resolvedCompanyId: string | null | undefined;
+  configDirty: boolean;
+  setConfigDirty: (dirty: boolean) => void;
+  setSaveConfigAction: (fn: (() => void) | null) => void;
+  setCancelConfigAction: (fn: (() => void) | null) => void;
+  configSaving: boolean;
+  setConfigSaving: (saving: boolean) => void;
+  updatePermissions: { mutate: (canCreate: boolean) => void; isPending: boolean };
+  urlRunId: string | null;
+}) {
+  const navigate = useNavigate();
+  const cognitiveData = getAgentCognitiveData(agent.id);
+
+  return (
+    <div className="space-y-4">
+      {/* Tab bar */}
+      <div className="overflow-x-auto -mx-1 px-1">
+        <div className="flex gap-1 min-w-max border-b border-border">
+          {TAB_ITEMS.map((tab) => (
+            <button
+              key={tab.value}
+              className={cn(
+                "px-3 py-1.5 text-xs font-medium whitespace-nowrap transition-colors relative",
+                activeView === tab.value
+                  ? "text-foreground"
+                  : "text-muted-foreground hover:text-foreground",
+              )}
+              onClick={() => navigate(`/agents/${agentRouteId}/${tab.value === "overview" ? "" : tab.value}`)}
+            >
+              {tab.label}
+              {activeView === tab.value && (
+                <span className="absolute inset-x-0 bottom-0 h-0.5 bg-foreground" />
+              )}
+            </button>
+          ))}
+        </div>
+      </div>
+
+      {/* Tab content */}
       {activeView === "overview" && (
-        <AgentOverview
+        <OverviewTab
           agent={agent}
-          runs={heartbeats ?? []}
-          assignedIssues={assignedIssues}
+          cognitiveData={cognitiveData}
+          runs={runs}
           runtimeState={runtimeState}
-          reportsToAgent={reportsToAgent ?? null}
-          directReports={directReports}
-          agentId={agent.id}
-          agentRouteId={canonicalAgentRef}
+          agentRouteId={agentRouteId}
         />
+      )}
+
+      {activeView === "cognitive" && (
+        cognitiveData ? (
+          <CognitiveOSTab cognitiveData={cognitiveData} />
+        ) : (
+          <EmptyCognitiveState tabName="Cognitive OS" />
+        )
+      )}
+
+      {activeView === "skills" && (
+        cognitiveData ? (
+          <SkillChainsTab cognitiveData={cognitiveData} />
+        ) : (
+          <EmptyCognitiveState tabName="Skill Chains" />
+        )
+      )}
+
+      {activeView === "tools" && (
+        cognitiveData ? (
+          <ToolsPoliciesTab cognitiveData={cognitiveData} />
+        ) : (
+          <EmptyCognitiveState tabName="Tools & Policies" />
+        )
+      )}
+
+      {activeView === "delegation" && (
+        cognitiveData ? (
+          <DelegationTab cognitiveData={cognitiveData} />
+        ) : (
+          <EmptyCognitiveState tabName="Delegation" />
+        )
+      )}
+
+      {activeView === "memory" && (
+        cognitiveData ? (
+          <MemoryContextTab cognitiveData={cognitiveData} />
+        ) : (
+          <EmptyCognitiveState tabName="Memory & Context" />
+        )
+      )}
+
+      {activeView === "runtime" && (
+        cognitiveData ? (
+          <RuntimeTab cognitiveData={cognitiveData} />
+        ) : (
+          <EmptyCognitiveState tabName="Runtime" />
+        )
+      )}
+
+      {activeView === "audit" && (
+        cognitiveData ? (
+          <AuditDriftTab cognitiveData={cognitiveData} />
+        ) : (
+          <EmptyCognitiveState tabName="Audit & Drift" />
+        )
       )}
 
       {activeView === "configure" && (
@@ -648,16 +843,38 @@ export function AgentDetail() {
         />
       )}
 
-      {activeView === "runs" && (
-        <RunsTab
-          runs={heartbeats ?? []}
-          companyId={resolvedCompanyId!}
-          agentId={agent.id}
-          agentRouteId={canonicalAgentRef}
-          selectedRunId={urlRunId ?? null}
-          adapterType={agent.adapterType}
-        />
+      {activeView === "activity" && (
+        urlRunId ? (
+          <RunsTab
+            runs={runs}
+            companyId={resolvedCompanyId!}
+            agentId={agent.id}
+            agentRouteId={agentRouteId}
+            selectedRunId={urlRunId}
+            adapterType={agent.adapterType}
+          />
+        ) : (
+          <ActivityTab
+            runs={runs}
+            agentRouteId={agentRouteId}
+          />
+        )
       )}
+    </div>
+  );
+}
+
+function EmptyCognitiveState({ tabName }: { tabName: string }) {
+  return (
+    <div className="flex flex-col items-center justify-center py-12 text-center">
+      <div className="h-12 w-12 rounded-lg bg-accent/50 flex items-center justify-center mb-3">
+        <Settings className="h-5 w-5 text-muted-foreground" />
+      </div>
+      <h3 className="text-sm font-medium mb-1">No {tabName} Data</h3>
+      <p className="text-xs text-muted-foreground max-w-sm">
+        Cognitive data has not been configured for this agent yet.
+        Connect a cognitive blueprint to enable {tabName.toLowerCase()} features.
+      </p>
     </div>
   );
 }

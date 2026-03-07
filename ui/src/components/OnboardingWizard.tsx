@@ -1,13 +1,14 @@
 import { useEffect, useState, useRef, useCallback, useMemo } from "react";
 import { useNavigate } from "react-router-dom";
-import { useQuery, useQueryClient } from "@tanstack/react-query";
-import type { AdapterEnvironmentTestResult } from "@paperclipai/shared";
+import { useQuery, useMutation, useQueryClient } from "@tanstack/react-query";
+import type { AdapterEnvironmentTestResult, CompanySecret } from "@paperclipai/shared";
 import { useDialog } from "../context/DialogContext";
 import { useCompany } from "../context/CompanyContext";
 import { companiesApi } from "../api/companies";
 import { goalsApi } from "../api/goals";
 import { agentsApi } from "../api/agents";
 import { issuesApi } from "../api/issues";
+import { secretsApi } from "../api/secrets";
 import { queryKeys } from "../lib/queryKeys";
 import { Dialog, DialogPortal } from "@/components/ui/dialog";
 import {
@@ -45,6 +46,7 @@ import {
   Loader2,
   FolderOpen,
   ChevronDown,
+  Key,
   X
 } from "lucide-react";
 
@@ -98,6 +100,12 @@ export function OnboardingWizard() {
   const [forceUnsetAnthropicApiKey, setForceUnsetAnthropicApiKey] =
     useState(false);
   const [unsetAnthropicLoading, setUnsetAnthropicLoading] = useState(false);
+
+  // Step 2 - Secret reference for API keys
+  const [selectedSecretId, setSelectedSecretId] = useState<string | null>(null);
+  const [inlineSecretName, setInlineSecretName] = useState("");
+  const [inlineSecretValue, setInlineSecretValue] = useState("");
+  const [inlineSecretOpen, setInlineSecretOpen] = useState(false);
 
   // Step 3
   const [taskTitle, setTaskTitle] = useState("Create your CEO HEARTBEAT.md");
@@ -164,6 +172,31 @@ export function OnboardingWizard() {
     queryFn: () => agentsApi.adapterModels(createdCompanyId!, adapterType),
     enabled: Boolean(createdCompanyId) && onboardingOpen && step === 2
   });
+
+  const { data: availableSecrets = [] } = useQuery({
+    queryKey: createdCompanyId
+      ? queryKeys.secrets.list(createdCompanyId)
+      : ["secrets", "none"],
+    queryFn: () => secretsApi.list(createdCompanyId!),
+    enabled: Boolean(createdCompanyId) && onboardingOpen && step === 2,
+  });
+
+  const createSecretMutation = useMutation({
+    mutationFn: (data: { name: string; value: string }) => {
+      if (!createdCompanyId) throw new Error("Company required");
+      return secretsApi.create(createdCompanyId, data);
+    },
+    onSuccess: (created: CompanySecret) => {
+      queryClient.invalidateQueries({
+        queryKey: queryKeys.secrets.list(createdCompanyId!),
+      });
+      setSelectedSecretId(created.id);
+      setInlineSecretOpen(false);
+      setInlineSecretName("");
+      setInlineSecretValue("");
+    },
+  });
+
   const isLocalAdapter =
     adapterType === "claude_local" || adapterType === "codex_local" || adapterType === "opencode_local" || adapterType === "cursor";
   const effectiveAdapterCommand =
@@ -246,6 +279,10 @@ export function OnboardingWizard() {
     setAdapterEnvLoading(false);
     setForceUnsetAnthropicApiKey(false);
     setUnsetAnthropicLoading(false);
+    setSelectedSecretId(null);
+    setInlineSecretName("");
+    setInlineSecretValue("");
+    setInlineSecretOpen(false);
     setTaskTitle("Create your CEO HEARTBEAT.md");
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
@@ -280,6 +317,24 @@ export function OnboardingWizard() {
           ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
           : defaultCreateValues.dangerouslyBypassSandbox
     });
+    // Inject secret reference for API key if selected
+    if (selectedSecretId) {
+      const env =
+        typeof config.env === "object" &&
+        config.env !== null &&
+        !Array.isArray(config.env)
+          ? { ...(config.env as Record<string, unknown>) }
+          : {};
+      const selectedSecret = availableSecrets.find((s) => s.id === selectedSecretId);
+      if (selectedSecret) {
+        env[selectedSecret.name] = {
+          type: "secret_ref",
+          secretId: selectedSecretId,
+          version: "latest",
+        };
+      }
+      config.env = env;
+    }
     if (adapterType === "claude_local" && forceUnsetAnthropicApiKey) {
       const env =
         typeof config.env === "object" &&
@@ -325,24 +380,46 @@ export function OnboardingWizard() {
   }
 
   async function handleStep1Next() {
+    if (loading) return; // prevent double-submit
     setLoading(true);
     setError(null);
     try {
-      const company = await companiesApi.create({ name: companyName.trim() });
-      setCreatedCompanyId(company.id);
-      setCreatedCompanyPrefix(company.issuePrefix);
-      setSelectedCompanyId(company.id);
-      queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      // Idempotency: if company was already created (e.g. retry after goal failure), skip creation
+      let companyId = createdCompanyId;
+      let companyPrefix = createdCompanyPrefix;
+      if (!companyId) {
+        // Check if a company with this name already exists (idempotency)
+        const existing = companies.find(
+          (c) => c.name.trim().toLowerCase() === companyName.trim().toLowerCase()
+        );
+        if (existing) {
+          companyId = existing.id;
+          companyPrefix = existing.issuePrefix;
+        } else {
+          const company = await companiesApi.create({ name: companyName.trim() });
+          companyId = company.id;
+          companyPrefix = company.issuePrefix;
+        }
+        setCreatedCompanyId(companyId);
+        setCreatedCompanyPrefix(companyPrefix);
+        setSelectedCompanyId(companyId);
+        queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      }
 
       if (companyGoal.trim()) {
-        await goalsApi.create(company.id, {
-          title: companyGoal.trim(),
-          level: "company",
-          status: "active"
-        });
-        queryClient.invalidateQueries({
-          queryKey: queryKeys.goals.list(company.id)
-        });
+        try {
+          await goalsApi.create(companyId, {
+            title: companyGoal.trim(),
+            level: "company",
+            status: "active"
+          });
+          queryClient.invalidateQueries({
+            queryKey: queryKeys.goals.list(companyId)
+          });
+        } catch (goalErr) {
+          // Goal creation is non-critical; company was created successfully
+          console.warn("Goal creation failed (non-critical):", goalErr);
+        }
       }
 
       setStep(2);
@@ -354,22 +431,21 @@ export function OnboardingWizard() {
   }
 
   async function handleStep2Next() {
-    if (!createdCompanyId) return;
+    if (!createdCompanyId || loading) return;
     setLoading(true);
     setError(null);
     try {
       if (adapterType === "opencode_local") {
         const selectedModelId = model.trim();
         if (!selectedModelId) {
-          setError("OpenCode requires an explicit model in provider/model format.");
+          setError("OpenCode requires an explicit model. Select one from the dropdown in provider/model format (e.g. anthropic/claude-sonnet-4-5-20250929).");
           return;
         }
         if (adapterModelsError) {
-          setError(
-            adapterModelsError instanceof Error
-              ? adapterModelsError.message
-              : "Failed to load OpenCode models.",
-          );
+          const msg = adapterModelsError instanceof Error
+            ? adapterModelsError.message
+            : "Failed to load OpenCode models.";
+          setError(`${msg} -- Ensure OpenCode is installed and at least one provider is authenticated. Run: opencode auth login`);
           return;
         }
         if (adapterModelsLoading || adapterModelsFetching) {
@@ -380,8 +456,8 @@ export function OnboardingWizard() {
         if (!discoveredModels.some((entry) => entry.id === selectedModelId)) {
           setError(
             discoveredModels.length === 0
-              ? "No OpenCode models discovered. Run `opencode models` and authenticate providers."
-              : `Configured OpenCode model is unavailable: ${selectedModelId}`,
+              ? "No OpenCode models discovered. Steps to fix:\n1. Ensure OpenCode is installed: npm install -g opencode\n2. Authenticate a provider: opencode auth login\n3. Add a provider API key (e.g. ANTHROPIC_API_KEY) as a secret above"
+              : `Model not available: ${selectedModelId}. It may require provider authentication. Add the provider's API key as a secret or run opencode auth login.`,
           );
           return;
         }
@@ -392,25 +468,28 @@ export function OnboardingWizard() {
         if (!result) return;
       }
 
-      const agent = await agentsApi.create(createdCompanyId, {
-        name: agentName.trim(),
-        role: "ceo",
-        adapterType,
-        adapterConfig: buildAdapterConfig(),
-        runtimeConfig: {
-          heartbeat: {
-            enabled: true,
-            intervalSec: 3600,
-            wakeOnDemand: true,
-            cooldownSec: 10,
-            maxConcurrentRuns: 1
+      // Idempotency: if agent was already created (e.g. retry), skip creation
+      if (!createdAgentId) {
+        const agent = await agentsApi.create(createdCompanyId, {
+          name: agentName.trim(),
+          role: "ceo",
+          adapterType,
+          adapterConfig: buildAdapterConfig(),
+          runtimeConfig: {
+            heartbeat: {
+              enabled: true,
+              intervalSec: 3600,
+              wakeOnDemand: true,
+              cooldownSec: 10,
+              maxConcurrentRuns: 1
+            }
           }
-        }
-      });
-      setCreatedAgentId(agent.id);
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.agents.list(createdCompanyId)
-      });
+        });
+        setCreatedAgentId(agent.id);
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.agents.list(createdCompanyId)
+        });
+      }
       setStep(3);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create agent");
@@ -469,22 +548,25 @@ export function OnboardingWizard() {
   }
 
   async function handleStep3Next() {
-    if (!createdCompanyId || !createdAgentId) return;
+    if (!createdCompanyId || !createdAgentId || loading) return;
     setLoading(true);
     setError(null);
     try {
-      const issue = await issuesApi.create(createdCompanyId, {
-        title: taskTitle.trim(),
-        ...(taskDescription.trim()
-          ? { description: taskDescription.trim() }
-          : {}),
-        assigneeAgentId: createdAgentId,
-        status: "todo"
-      });
-      setCreatedIssueRef(issue.identifier ?? issue.id);
-      queryClient.invalidateQueries({
-        queryKey: queryKeys.issues.list(createdCompanyId)
-      });
+      // Idempotency: if issue was already created, skip
+      if (!createdIssueRef) {
+        const issue = await issuesApi.create(createdCompanyId, {
+          title: taskTitle.trim(),
+          ...(taskDescription.trim()
+            ? { description: taskDescription.trim() }
+            : {}),
+          assigneeAgentId: createdAgentId,
+          status: "todo"
+        });
+        setCreatedIssueRef(issue.identifier ?? issue.id);
+        queryClient.invalidateQueries({
+          queryKey: queryKeys.issues.list(createdCompanyId)
+        });
+      }
       setStep(4);
     } catch (err) {
       setError(err instanceof Error ? err.message : "Failed to create task");
@@ -514,6 +596,7 @@ export function OnboardingWizard() {
   function handleKeyDown(e: React.KeyboardEvent) {
     if (e.key === "Enter" && (e.metaKey || e.ctrlKey)) {
       e.preventDefault();
+      if (loading) return; // prevent double-fire
       if (step === 1 && companyName.trim()) handleStep1Next();
       else if (step === 2 && agentName.trim()) handleStep2Next();
       else if (step === 3 && taskTitle.trim()) handleStep3Next();
@@ -554,6 +637,10 @@ export function OnboardingWizard() {
                 <span className="text-sm font-medium">Get Started</span>
                 <span className="text-sm text-muted-foreground/60">
                   Step {step} of 4
+                  {step === 1 && " - Company"}
+                  {step === 2 && " - Agent"}
+                  {step === 3 && " - Task"}
+                  {step === 4 && " - Launch"}
                 </span>
                 <div className="flex items-center gap-1.5 ml-auto">
                   {[1, 2, 3, 4].map((s) => (
@@ -853,6 +940,129 @@ export function OnboardingWizard() {
                     </div>
                   )}
 
+                  {/* API Key / Secret Reference */}
+                  {isLocalAdapter && (
+                    <div className="space-y-2 rounded-md border border-border p-3">
+                      <div className="flex items-center gap-2">
+                        <Key className="h-3.5 w-3.5 text-muted-foreground" />
+                        <p className="text-xs font-medium">API Key (optional)</p>
+                      </div>
+                      <p className="text-[11px] text-muted-foreground">
+                        {adapterType === "claude_local"
+                          ? "If you use CLI login (claude login), no API key is needed. Add one only for direct API access."
+                          : adapterType === "opencode_local"
+                            ? "OpenCode providers need API keys. Select an existing secret or create one."
+                            : "Select an existing API key secret or create one for this adapter."}
+                      </p>
+                      {availableSecrets.length > 0 ? (
+                        <select
+                          className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm outline-none"
+                          value={selectedSecretId ?? ""}
+                          onChange={(e) => setSelectedSecretId(e.target.value || null)}
+                        >
+                          <option value="">
+                            {adapterType === "claude_local" ? "None (use CLI login)" : "None"}
+                          </option>
+                          {availableSecrets.map((s) => (
+                            <option key={s.id} value={s.id}>
+                              {s.name} (v{s.latestVersion})
+                            </option>
+                          ))}
+                        </select>
+                      ) : (
+                        <p className="text-[11px] text-muted-foreground/60">
+                          No secrets stored yet.
+                        </p>
+                      )}
+                      {!inlineSecretOpen ? (
+                        <Button
+                          size="sm"
+                          variant="outline"
+                          className="h-7 px-2.5 text-xs"
+                          onClick={() => {
+                            setInlineSecretOpen(true);
+                            setInlineSecretName(
+                              adapterType === "claude_local"
+                                ? "ANTHROPIC_API_KEY"
+                                : adapterType === "opencode_local"
+                                  ? "OPENAI_API_KEY"
+                                  : "OPENAI_API_KEY"
+                            );
+                          }}
+                        >
+                          Create API Key
+                        </Button>
+                      ) : (
+                        <div className="space-y-2 rounded-md border border-border/70 bg-muted/20 p-2.5">
+                          <div>
+                            <label className="text-[11px] text-muted-foreground mb-0.5 block">Name</label>
+                            <select
+                              className="w-full rounded-md border border-border bg-background px-2 py-1 text-xs outline-none"
+                              value={inlineSecretName}
+                              onChange={(e) => setInlineSecretName(e.target.value)}
+                            >
+                              {["ANTHROPIC_API_KEY", "OPENAI_API_KEY", "OPENROUTER_API_KEY", "GOOGLE_API_KEY"].map(
+                                (name) => (
+                                  <option
+                                    key={name}
+                                    value={name}
+                                    disabled={availableSecrets.some((s) => s.name === name)}
+                                  >
+                                    {name}{availableSecrets.some((s) => s.name === name) ? " (exists)" : ""}
+                                  </option>
+                                )
+                              )}
+                            </select>
+                          </div>
+                          <div>
+                            <label className="text-[11px] text-muted-foreground mb-0.5 block">Value</label>
+                            <input
+                              type="password"
+                              className="w-full rounded-md border border-border bg-transparent px-2 py-1 text-xs font-mono outline-none placeholder:text-muted-foreground/40"
+                              placeholder="sk-..."
+                              value={inlineSecretValue}
+                              onChange={(e) => setInlineSecretValue(e.target.value)}
+                            />
+                          </div>
+                          {createSecretMutation.isError && (
+                            <p className="text-[11px] text-destructive">
+                              {createSecretMutation.error instanceof Error
+                                ? createSecretMutation.error.message
+                                : "Failed to create secret"}
+                            </p>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <Button
+                              size="sm"
+                              className="h-6 px-2 text-[11px]"
+                              disabled={!inlineSecretName || !inlineSecretValue.trim() || createSecretMutation.isPending}
+                              onClick={() =>
+                                createSecretMutation.mutate({
+                                  name: inlineSecretName,
+                                  value: inlineSecretValue,
+                                })
+                              }
+                            >
+                              {createSecretMutation.isPending ? "Saving..." : "Save"}
+                            </Button>
+                            <Button
+                              size="sm"
+                              variant="ghost"
+                              className="h-6 px-2 text-[11px]"
+                              onClick={() => {
+                                setInlineSecretOpen(false);
+                                setInlineSecretName("");
+                                setInlineSecretValue("");
+                              }}
+                            >
+                              Cancel
+                            </Button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+
                   {isLocalAdapter && (
                     <div className="space-y-2 rounded-md border border-border p-3">
                       <div className="flex items-center justify-between gap-2">
@@ -1081,10 +1291,37 @@ export function OnboardingWizard() {
                 </div>
               )}
 
-              {/* Error */}
+              {/* Error with retry */}
               {error && (
-                <div className="mt-3">
+                <div className="mt-3 rounded-md border border-destructive/30 bg-destructive/5 px-3 py-2.5 space-y-2">
                   <p className="text-xs text-destructive">{error}</p>
+                  <button
+                    className="text-xs text-destructive underline hover:no-underline"
+                    disabled={loading}
+                    onClick={() => {
+                      setError(null);
+                      if (step === 1) handleStep1Next();
+                      else if (step === 2) handleStep2Next();
+                      else if (step === 3) handleStep3Next();
+                    }}
+                  >
+                    {loading ? "Retrying..." : "Retry"}
+                  </button>
+                </div>
+              )}
+
+              {/* Partial failure recovery: company created but stuck on step 1 */}
+              {step === 1 && createdCompanyId && !error && (
+                <div className="mt-3 rounded-md border border-amber-300/60 bg-amber-50/40 dark:bg-amber-500/10 px-3 py-2.5">
+                  <p className="text-xs text-amber-900/90 dark:text-amber-300">
+                    Company already created. You can continue setup.
+                  </p>
+                  <button
+                    className="text-xs text-amber-700 dark:text-amber-400 underline hover:no-underline mt-1"
+                    onClick={() => setStep(2)}
+                  >
+                    Continue to agent setup
+                  </button>
                 </div>
               )}
 

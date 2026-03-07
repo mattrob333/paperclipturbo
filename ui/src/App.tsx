@@ -24,6 +24,8 @@ import { Inbox } from "./pages/Inbox";
 import { CompanySettings } from "./pages/CompanySettings";
 import { DesignGuide } from "./pages/DesignGuide";
 import { OrgChart } from "./pages/OrgChart";
+import { CognitiveBlueprint } from "./pages/CognitiveBlueprint";
+import { DeveloperMode } from "./pages/DeveloperMode";
 import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { InviteLandingPage } from "./pages/InviteLanding";
@@ -41,7 +43,7 @@ function BootstrapPendingPage() {
           the first admin invite URL:
         </p>
         <pre className="mt-4 overflow-x-auto rounded-md border border-border bg-muted/30 p-3 text-xs">
-{`pnpm paperclipai auth bootstrap-ceo`}
+          {`pnpm paperclipai auth bootstrap-ceo`}
         </pre>
       </div>
     </div>
@@ -76,6 +78,11 @@ function CloudAccessGate() {
     );
   }
 
+  // local_trusted mode: pass through without authentication
+  if (healthQuery.data?.deploymentMode === "local_trusted") {
+    return <Outlet />;
+  }
+
   if (isAuthenticatedMode && healthQuery.data?.bootstrapStatus === "bootstrap_pending") {
     return <BootstrapPendingPage />;
   }
@@ -96,6 +103,7 @@ function boardRoutes() {
       <Route path="companies" element={<Companies />} />
       <Route path="company/settings" element={<CompanySettings />} />
       <Route path="org" element={<OrgChart />} />
+      <Route path="cognitive-blueprint" element={<CognitiveBlueprint />} />
       <Route path="agents" element={<Navigate to="/agents/all" replace />} />
       <Route path="agents/all" element={<Agents />} />
       <Route path="agents/active" element={<Agents />} />
@@ -222,6 +230,8 @@ export function App() {
           <Route path="projects/:projectId/overview" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/issues" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/issues/:filter" element={<UnprefixedBoardRedirect />} />
+          <Route path="developer-mode" element={<UnprefixedBoardRedirect />} />
+          <Route path=":companyPrefix/developer-mode" element={<DeveloperMode />} />
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}
           </Route>

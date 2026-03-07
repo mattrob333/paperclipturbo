@@ -23,6 +23,12 @@ import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard } from "lucide
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
+import { CognitiveHealthSection } from "../components/dashboard/CognitiveHealthSection";
+import { DelegationEfficiencySection } from "../components/dashboard/DelegationEfficiencySection";
+import { ToolIntelligenceSection } from "../components/dashboard/ToolIntelligenceSection";
+import { StewardRecommendations } from "../components/dashboard/StewardRecommendations";
+import { DriftAlerts } from "../components/dashboard/DriftAlerts";
+import { mockDashboardMetrics, mockAgentCognitiveData } from "../lib/mockCognitiveData";
 import type { Agent, Issue } from "@paperclipai/shared";
 
 function getRecentIssues(issues: Issue[]): Issue[] {
@@ -339,6 +345,32 @@ export function Dashboard() {
                   ))}
                 </div>
               )}
+            </div>
+          </div>
+
+          {/* Cognitive Metrics Sections */}
+          <div className="border-t border-border pt-6 space-y-6">
+            <CognitiveHealthSection
+              metrics={mockDashboardMetrics}
+              agents={mockAgentCognitiveData}
+            />
+
+            <DelegationEfficiencySection
+              metrics={mockDashboardMetrics}
+              agents={mockAgentCognitiveData}
+            />
+
+            <ToolIntelligenceSection
+              metrics={mockDashboardMetrics}
+              agents={mockAgentCognitiveData}
+            />
+
+            <div className="grid md:grid-cols-2 gap-6">
+              <StewardRecommendations
+                agents={mockAgentCognitiveData}
+                recommendations={mockDashboardMetrics.stewardRecommendations}
+              />
+              <DriftAlerts agents={mockAgentCognitiveData} />
             </div>
           </div>
 

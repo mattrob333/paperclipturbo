@@ -19,6 +19,8 @@ import { Tabs } from "@/components/ui/tabs";
 import { Button } from "@/components/ui/button";
 import { Bot, Plus, List, GitBranch, SlidersHorizontal } from "lucide-react";
 import type { Agent } from "@paperclipai/shared";
+import { deriveAgentSetupState } from "@paperclipai/shared";
+import { AgentSetupBadge } from "../components/AgentSetupBadge";
 
 const adapterLabels: Record<string, string> = {
   claude_local: "Claude",
@@ -226,6 +228,7 @@ export function Agents() {
       {effectiveView === "list" && filtered.length > 0 && (
         <div className="border border-border">
           {filtered.map((agent) => {
+            const setupInfo = deriveAgentSetupState({ agent });
             return (
               <EntityRow
                 key={agent.id}
@@ -263,6 +266,7 @@ export function Agents() {
                       <span className="text-xs text-muted-foreground font-mono w-14 text-right">
                         {adapterLabels[agent.adapterType] ?? agent.adapterType}
                       </span>
+                      <AgentSetupBadge state={setupInfo.state} />
                       <span className="text-xs text-muted-foreground w-16 text-right">
                         {agent.lastHeartbeatAt ? relativeTime(agent.lastHeartbeatAt) : "—"}
                       </span>
@@ -320,6 +324,7 @@ function OrgTreeNode({
   liveRunByAgent: Map<string, { runId: string; liveCount: number }>;
 }) {
   const agent = agentMap.get(node.id);
+  const setupInfo = agent ? deriveAgentSetupState({ agent }) : null;
 
   const statusColor = agentStatusDot[node.status] ?? agentStatusDotDefault;
 
@@ -364,6 +369,7 @@ function OrgTreeNode({
                 <span className="text-xs text-muted-foreground font-mono w-14 text-right">
                   {adapterLabels[agent.adapterType] ?? agent.adapterType}
                 </span>
+                {setupInfo && <AgentSetupBadge state={setupInfo.state} />}
                 <span className="text-xs text-muted-foreground w-16 text-right">
                   {agent.lastHeartbeatAt ? relativeTime(agent.lastHeartbeatAt) : "—"}
                 </span>

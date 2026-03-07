@@ -8,6 +8,7 @@ import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
 import { Settings, Check } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
+import { SecretsManager } from "../components/SecretsManager";
 import {
   Field,
   ToggleField,
@@ -308,6 +309,9 @@ export function CompanySettings() {
           />
         </div>
       </div>
+
+      {/* Secrets / Credentials */}
+      {selectedCompanyId && <SecretsManager companyId={selectedCompanyId} />}
 
       {/* Invites */}
       <div className="space-y-4">

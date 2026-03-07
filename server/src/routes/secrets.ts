@@ -1,5 +1,7 @@
 import { Router } from "express";
+import { sql } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
+import { agents } from "@paperclipai/db";
 import {
   SECRET_PROVIDERS,
   type SecretProvider,
@@ -159,6 +161,36 @@ export function secretRoutes(db: Db) {
     });
 
     res.json({ ok: true });
+  });
+
+  router.get("/secrets/:id/usage", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const existing = await svc.getById(id);
+    if (!existing) {
+      res.status(404).json({ error: "Secret not found" });
+      return;
+    }
+    assertCompanyAccess(req, existing.companyId);
+
+    // Find agents whose adapterConfig.env contains a secret_ref to this secret.
+    // UUIDs are unique enough that a text LIKE match is reliable.
+    const referencingAgents = await db
+      .select({ id: agents.id, name: agents.name, status: agents.status })
+      .from(agents)
+      .where(
+        sql`${agents.companyId} = ${existing.companyId}
+          AND ${agents.adapterConfig}::text LIKE ${"%" + id + "%"}`,
+      );
+
+    res.json({
+      secretId: id,
+      usedBy: referencingAgents.map((a) => ({
+        agentId: a.id,
+        agentName: a.name,
+        agentStatus: a.status,
+      })),
+    });
   });
 
   return router;
