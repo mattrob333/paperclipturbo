@@ -1,12 +1,16 @@
 import { useEffect, useState } from "react";
-import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { Navigate } from "react-router-dom";
+import { useNavigate } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
 import { companiesApi } from "../api/companies";
+import { provisioningApi } from "../api/provisioning";
 import { accessApi } from "../api/access";
 import { queryKeys } from "../lib/queryKeys";
 import { Button } from "@/components/ui/button";
-import { Settings, Check } from "lucide-react";
+import { Link } from "@/lib/router";
+import { Settings, Check, Loader2, AlertCircle } from "lucide-react";
 import { CompanyPatternIcon } from "../components/CompanyPatternIcon";
 import { SecretsManager } from "../components/SecretsManager";
 import {
@@ -30,6 +34,7 @@ export function CompanySettings() {
   } = useCompany();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   // General settings local state
   const [companyName, setCompanyName] = useState("");
@@ -43,6 +48,12 @@ export function CompanySettings() {
     setDescription(selectedCompany.description ?? "");
     setBrandColor(selectedCompany.brandColor ?? "");
   }, [selectedCompany]);
+
+  const { data: provJob } = useQuery({
+    queryKey: ["provisioning-job", selectedCompanyId],
+    queryFn: () => provisioningApi.getJobForCompany(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
 
   const [inviteError, setInviteError] = useState<string | null>(null);
   const [inviteSnippet, setInviteSnippet] = useState<string | null>(null);
@@ -146,15 +157,23 @@ export function CompanySettings() {
       nextCompanyId: string | null;
     }) => companiesApi.archive(companyId).then(() => ({ nextCompanyId })),
     onSuccess: async ({ nextCompanyId }) => {
-      if (nextCompanyId) {
-        setSelectedCompanyId(nextCompanyId);
-      }
+      setSelectedCompanyId(nextCompanyId);
       await queryClient.invalidateQueries({
         queryKey: queryKeys.companies.all
       });
       await queryClient.invalidateQueries({
         queryKey: queryKeys.companies.stats
       });
+      if (nextCompanyId) {
+        const nextCompany = companies.find((c) => c.id === nextCompanyId);
+        if (nextCompany) {
+          navigate(`/${nextCompany.issuePrefix}/dashboard`);
+        } else {
+          navigate("/");
+        }
+      } else {
+        navigate("/");
+      }
     }
   });
 
@@ -166,9 +185,55 @@ export function CompanySettings() {
   }, [setBreadcrumbs, selectedCompany?.name]);
 
   if (!selectedCompany) {
+    return <Navigate to="/onboarding/start" replace />;
+  }
+
+  // Lifecycle guard: non-active companies cannot be configured
+  if (selectedCompany.status === "provisioning" || selectedCompany.status === "draft" || selectedCompany.status === "failed") {
     return (
-      <div className="text-sm text-muted-foreground">
-        No company selected. Select a company from the switcher above.
+      <div className="max-w-2xl space-y-6">
+        <div className="flex items-center gap-2">
+          <Settings className="h-5 w-5 text-muted-foreground" />
+          <h1 className="text-lg font-semibold">Company Settings</h1>
+        </div>
+        {(selectedCompany.status === "provisioning" || selectedCompany.status === "draft") && (
+          <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-6">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-400" />
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100">Company setup in progress</h3>
+                <p className="text-xs text-blue-700 dark:text-blue-300 mt-0.5">
+                  Settings will be available once setup is complete.
+                </p>
+              </div>
+              <Link
+                to={provJob?.id ? `/provisioning/${provJob.id}` : "/bootstrap"}
+                className="text-sm font-medium text-blue-700 dark:text-blue-300 hover:underline"
+              >
+                View Details
+              </Link>
+            </div>
+          </div>
+        )}
+        {selectedCompany.status === "failed" && (
+          <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-6">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-red-900 dark:text-red-100">Provisioning failed</h3>
+                <p className="text-xs text-red-700 dark:text-red-300 mt-0.5">
+                  There was an error setting up this company. View provisioning details to retry.
+                </p>
+              </div>
+              <Link
+                to={provJob?.id ? `/provisioning/${provJob.id}` : "/bootstrap"}
+                className="text-sm font-medium text-red-700 dark:text-red-300 hover:underline"
+              >
+                View Details
+              </Link>
+            </div>
+          </div>
+        )}
       </div>
     );
   }
@@ -271,6 +336,34 @@ export function CompanySettings() {
           </div>
         </div>
       </div>
+
+      {/* Infrastructure */}
+      {provJob && (
+        <div className="space-y-4">
+          <div className="text-xs font-medium text-muted-foreground uppercase tracking-wide">
+            Infrastructure
+          </div>
+          <div className="space-y-3 rounded-md border border-border px-4 py-4">
+            <div className="flex items-center justify-between">
+              <span className="text-sm text-muted-foreground">Provisioning mode</span>
+              <span className="text-sm font-medium">
+                {provJob.provisioningMode === "attach" ? "Attached" : "New Setup"}
+              </span>
+            </div>
+            {provJob.runtimeMode !== "unknown" && (
+              <div className="flex items-center justify-between">
+                <div className="flex items-center gap-1">
+                  <span className="text-sm text-muted-foreground">Runtime mode</span>
+                  <HintIcon text={provJob.runtimeMode === "shared" ? "This company uses a shared OpenClaw gateway alongside other companies." : "This company uses a separately provisioned OpenClaw gateway. This was set up outside of Paperclip."} />
+                </div>
+                <span className="text-sm font-medium">
+                  {provJob.runtimeMode === "shared" ? "Shared" : "Dedicated"}
+                </span>
+              </div>
+            )}
+          </div>
+        </div>
+      )}
 
       {/* Save button for General + Appearance */}
       {generalDirty && (

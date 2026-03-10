@@ -16,6 +16,7 @@ import {
 import { cn } from "@/lib/utils";
 import { useDeveloperMode } from "@/context/DeveloperModeContext";
 import { useCompany } from "@/context/CompanyContext";
+import { Link } from "@/lib/router";
 import { useAgentRuntime, useAgentValidation } from "@/hooks/useRuntime";
 import { agentsApi } from "@/api/agents";
 import { useQueryClient } from "@tanstack/react-query";
@@ -378,14 +379,20 @@ export function ClaudeDock() {
       });
     }
 
+    if (status === "credentials_missing") {
+      items.push({ label: "Login with Claude", action: handleLoginWithClaude, icon: Bot });
+    }
+
     return items;
   }, [
     selectedAgent,
     runtimeData,
     validationData,
+    status,
     handleInvokeHeartbeat,
     handleWakeup,
     handleResetSession,
+    handleLoginWithClaude,
     appendResult,
   ]);
 
@@ -544,6 +551,57 @@ export function ClaudeDock() {
 
           {/* Messages area */}
           <div className="flex-1 overflow-y-auto px-3 py-2 space-y-2 scrollbar-auto-hide">
+            {status === "credentials_missing" && (
+              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-[12px] text-amber-100">
+                <p className="font-medium text-amber-200">Claude credentials need attention</p>
+                <p className="mt-1 text-amber-100/80">
+                  Add or rotate your <span className="font-mono">ANTHROPIC_API_KEY</span> in company settings, then retry Claude login or wake the agent again.
+                </p>
+                <p className="mt-1 text-amber-100/80">
+                  Safe path: open company settings, create a secret named <span className="font-mono">ANTHROPIC_API_KEY</span>, paste your key once, and Paperclip will store it encrypted for this company.
+                </p>
+                <div className="mt-2 flex items-center gap-2">
+                  <Link to="/company/settings">
+                    <Button size="sm" variant="outline" className="h-7 text-[11px]">
+                      Add ANTHROPIC_API_KEY
+                    </Button>
+                  </Link>
+                  <Link to="/company/settings">
+                    <Button size="sm" variant="ghost" className="h-7 text-[11px]">
+                      Manage Secrets
+                    </Button>
+                  </Link>
+                  <Button
+                    size="sm"
+                    variant="ghost"
+                    className="h-7 text-[11px]"
+                    disabled={actionInProgress}
+                    onClick={handleLoginWithClaude}
+                  >
+                    Retry Claude Login
+                  </Button>
+                </div>
+              </div>
+            )}
+
+            {status === "workspace_unavailable" && (
+              <div className="rounded-md border border-orange-500/30 bg-orange-500/10 px-3 py-2 text-[12px] text-orange-100">
+                <p className="font-medium text-orange-200">Workspace not available</p>
+                <p className="mt-1 text-orange-100/80">
+                  This agent needs a valid OpenClaw workspace path before Developer Mode can inspect files or help with setup.
+                </p>
+              </div>
+            )}
+
+            {status === "ready" && workspaceRoot && (
+              <div className="rounded-md border border-green-500/20 bg-green-500/5 px-3 py-2 text-[12px] text-green-100">
+                <p className="font-medium text-green-200">Claude Agent SDK is ready to assist</p>
+                <p className="mt-1 text-green-100/80">
+                  Use the dock to trigger Claude login, wake the selected agent, inspect validation issues, and operate against the mounted OpenClaw workspace.
+                </p>
+              </div>
+            )}
+
             {messages.map((msg) => (
               <div key={msg.id} className="flex gap-2 text-[12px]">
                 {msg.role === "system" ? (
@@ -615,7 +673,7 @@ export function ClaudeDock() {
               onChange={(e) => setInput(e.target.value)}
               placeholder={
                 selectedAgent
-                  ? "Type a command: invoke heartbeat, reset session, wake agent..."
+                  ? "Type a command: invoke heartbeat, wake agent, reset session, login with claude..."
                   : "Select an agent to get started..."
               }
               disabled={!selectedAgent || actionInProgress}

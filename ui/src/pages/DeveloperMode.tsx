@@ -1,4 +1,6 @@
+import { useEffect } from "react";
 import { useSearchParams } from "react-router-dom";
+import { useQuery } from "@tanstack/react-query";
 import { ArrowLeft, Code2, Monitor, Save, ShieldCheck } from "lucide-react";
 import { Link } from "@/lib/router";
 import { Button } from "@/components/ui/button";
@@ -8,6 +10,8 @@ import { EditorPane } from "@/components/developer-mode/EditorPane";
 import { ContextPanel } from "@/components/developer-mode/ContextPanel";
 import { ClaudeDock } from "@/components/developer-mode/ClaudeDock";
 import { useCompany } from "@/context/CompanyContext";
+import { agentsApi } from "@/api/agents";
+import { queryKeys } from "@/lib/queryKeys";
 
 function DevModeTopBar() {
   const { selectedCompany } = useCompany();
@@ -115,9 +119,33 @@ function DevModeLayout() {
 export function DeveloperMode() {
   const [searchParams] = useSearchParams();
   const agentParam = searchParams.get("agent");
+  const { selectedCompanyId } = useCompany();
+  const { data: agents = [] } = useQuery({
+    queryKey: queryKeys.agents.list(selectedCompanyId ?? ""),
+    queryFn: () => agentsApi.list(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const healthyAgents = agents.filter((agent) => agent.status !== "error");
+  const preferredAgents = healthyAgents.length > 0 ? healthyAgents : agents;
+
+  const defaultAgentId =
+    agentParam ??
+    preferredAgents.find((agent) => agent.adapterType === "claude_local")?.id ??
+    preferredAgents.find((agent) => agent.adapterType === "openclaw")?.id ??
+    preferredAgents[0]?.id ??
+    null;
+
+  useEffect(() => {
+    if (agentParam || !defaultAgentId) return;
+    const next = new URLSearchParams(searchParams);
+    next.set("agent", defaultAgentId);
+    const nextUrl = `${window.location.pathname}?${next.toString()}`;
+    window.history.replaceState(null, "", nextUrl);
+  }, [agentParam, defaultAgentId, searchParams]);
 
   return (
-    <DeveloperModeProvider initialAgent={agentParam}>
+    <DeveloperModeProvider initialAgent={defaultAgentId}>
       <DevModeLayout />
     </DeveloperModeProvider>
   );

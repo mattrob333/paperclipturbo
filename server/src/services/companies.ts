@@ -1,4 +1,4 @@
-import { eq, count } from "drizzle-orm";
+import { eq, count, inArray } from "drizzle-orm";
 import type { Db } from "@paperclipai/db";
 import {
   companies,
@@ -7,9 +7,18 @@ import {
   agentRuntimeState,
   agentTaskSessions,
   agentWakeupRequests,
+  agentConfigRevisions,
   issues,
   issueComments,
+  issueReadStates,
+  issueAttachments,
+  issueApprovals,
+  issueLabels,
+  labels,
+  assets,
   projects,
+  projectGoals,
+  projectWorkspaces,
   goals,
   heartbeatRuns,
   heartbeatRunEvents,
@@ -22,6 +31,15 @@ import {
   invites,
   principalPermissionGrants,
   companyMemberships,
+  onboardingPrograms,
+  onboardingParticipants,
+  discoveryQuestions,
+  discoveryResponses,
+  synthesisArtifacts,
+  onboardingProposals,
+  buildRuns,
+  sponsorIntakes,
+  provisioningJobs,
 } from "@paperclipai/db";
 
 export function companyService(db: Db) {
@@ -100,12 +118,44 @@ export function companyService(db: Db) {
     remove: (id: string) =>
       db.transaction(async (tx) => {
         // Delete from child tables in dependency order
+
+        // --- Provisioning jobs (direct FK to companies) ---
+        await tx.delete(provisioningJobs).where(eq(provisioningJobs.companyId, id));
+
+        // --- Onboarding chain (deepest children first) ---
+        // discoveryResponses FK → participants.id AND questions.id (no direct companyId)
+        const programIds = tx
+          .select({ id: onboardingPrograms.id })
+          .from(onboardingPrograms)
+          .where(eq(onboardingPrograms.companyId, id));
+        const participantIds = tx
+          .select({ id: onboardingParticipants.id })
+          .from(onboardingParticipants)
+          .where(inArray(onboardingParticipants.onboardingProgramId, programIds));
+
+        await tx.delete(discoveryResponses).where(inArray(discoveryResponses.participantId, participantIds));
+        await tx.delete(synthesisArtifacts).where(inArray(synthesisArtifacts.onboardingProgramId, programIds));
+        await tx.delete(onboardingProposals).where(inArray(onboardingProposals.onboardingProgramId, programIds));
+        await tx.delete(buildRuns).where(inArray(buildRuns.onboardingProgramId, programIds));
+        await tx.delete(sponsorIntakes).where(inArray(sponsorIntakes.onboardingProgramId, programIds));
+        await tx.delete(discoveryQuestions).where(inArray(discoveryQuestions.onboardingProgramId, programIds));
+        await tx.delete(onboardingParticipants).where(inArray(onboardingParticipants.onboardingProgramId, programIds));
+        await tx.delete(onboardingPrograms).where(eq(onboardingPrograms.companyId, id));
+
+        // --- Agent/heartbeat chain ---
         await tx.delete(heartbeatRunEvents).where(eq(heartbeatRunEvents.companyId, id));
         await tx.delete(agentTaskSessions).where(eq(agentTaskSessions.companyId, id));
         await tx.delete(heartbeatRuns).where(eq(heartbeatRuns.companyId, id));
         await tx.delete(agentWakeupRequests).where(eq(agentWakeupRequests.companyId, id));
         await tx.delete(agentApiKeys).where(eq(agentApiKeys.companyId, id));
         await tx.delete(agentRuntimeState).where(eq(agentRuntimeState.companyId, id));
+        await tx.delete(agentConfigRevisions).where(eq(agentConfigRevisions.companyId, id));
+
+        // --- Issue chain (children before parents) ---
+        await tx.delete(issueReadStates).where(eq(issueReadStates.companyId, id));
+        await tx.delete(issueAttachments).where(eq(issueAttachments.companyId, id));
+        await tx.delete(issueApprovals).where(eq(issueApprovals.companyId, id));
+        await tx.delete(issueLabels).where(eq(issueLabels.companyId, id));
         await tx.delete(issueComments).where(eq(issueComments.companyId, id));
         await tx.delete(costEvents).where(eq(costEvents.companyId, id));
         await tx.delete(approvalComments).where(eq(approvalComments.companyId, id));
@@ -116,8 +166,18 @@ export function companyService(db: Db) {
         await tx.delete(principalPermissionGrants).where(eq(principalPermissionGrants.companyId, id));
         await tx.delete(companyMemberships).where(eq(companyMemberships.companyId, id));
         await tx.delete(issues).where(eq(issues.companyId, id));
+        await tx.delete(labels).where(eq(labels.companyId, id));
+
+        // --- Project chain (join tables before parents) ---
+        await tx.delete(projectGoals).where(eq(projectGoals.companyId, id));
+        await tx.delete(projectWorkspaces).where(eq(projectWorkspaces.companyId, id));
         await tx.delete(goals).where(eq(goals.companyId, id));
         await tx.delete(projects).where(eq(projects.companyId, id));
+
+        // --- Assets (after issueAttachments which FK → assets) ---
+        await tx.delete(assets).where(eq(assets.companyId, id));
+
+        // --- Agents and remaining ---
         await tx.delete(agents).where(eq(agents.companyId, id));
         await tx.delete(activityLog).where(eq(activityLog.companyId, id));
         const rows = await tx

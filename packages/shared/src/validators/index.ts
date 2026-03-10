@@ -131,3 +131,56 @@ export {
   type UpdateMemberPermissions,
   type UpdateUserCompanyAccess,
 } from "./access.js";
+
+export {
+  provisionRequestSchema,
+  validateConnectionSchema,
+  syncRequestSchema,
+  type ProvisionRequestInput,
+  type ValidateConnectionInput,
+  type SyncRequestInput,
+} from "./instance.js";
+
+export {
+  createOnboardingProgramSchema,
+  updateOnboardingProgramSchema,
+  createSponsorIntakeSchema,
+  updateSponsorIntakeSchema,
+  createParticipantSchema,
+  updateParticipantSchema,
+  submitDiscoveryResponseSchema,
+  runSynthesisSchema,
+  generateProposalSchema,
+  updateProposalStatusSchema,
+  type CreateOnboardingProgram,
+  type UpdateOnboardingProgram,
+  type CreateSponsorIntake,
+  type UpdateSponsorIntake,
+  type CreateParticipant,
+  type UpdateParticipant,
+  type SubmitDiscoveryResponse,
+  type RunSynthesis,
+  type GenerateProposal,
+  type UpdateProposalStatus,
+} from "./onboarding.js";
+
+export {
+  startBuildSchema,
+  loadDemoSchema,
+  type StartBuild,
+  type LoadDemo,
+} from "./experience.js";
+
+export {
+  startProvisioningSchema,
+  retryProvisioningSchema,
+  type StartProvisioningInput,
+  type RetryProvisioningInput,
+} from "./provisioning.js";
+
+export {
+  discoverWorkspaceSchema,
+  confirmAttachSchema,
+  type DiscoverWorkspaceInput,
+  type ConfirmAttachInput,
+} from "./attach.js";

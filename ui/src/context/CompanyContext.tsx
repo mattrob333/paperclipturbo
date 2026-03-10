@@ -23,7 +23,7 @@ interface CompanyContextValue {
   selectionSource: CompanySelectionSource;
   loading: boolean;
   error: Error | null;
-  setSelectedCompanyId: (companyId: string, options?: CompanySelectionOptions) => void;
+  setSelectedCompanyId: (companyId: string | null, options?: CompanySelectionOptions) => void;
   reloadCompanies: () => Promise<void>;
   createCompany: (data: {
     name: string;
@@ -56,15 +56,30 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     retry: false,
   });
   const sidebarCompanies = useMemo(
-    () => companies.filter((company) => company.status !== "archived"),
+    () => companies.filter((company) => company.status !== "archived" && company.status !== "draft"),
     [companies],
   );
 
+  function clearSelectedCompanyState() {
+    localStorage.removeItem(STORAGE_KEY);
+  }
+
   // Auto-select first company when list loads
   useEffect(() => {
-    if (companies.length === 0) return;
+    if (companies.length === 0) {
+      setSelectedCompanyIdState(null);
+      setSelectionSource("bootstrap");
+      clearSelectedCompanyState();
+      return;
+    }
 
-    const selectableCompanies = sidebarCompanies.length > 0 ? sidebarCompanies : companies;
+    const selectableCompanies = sidebarCompanies;
+    if (selectableCompanies.length === 0) {
+      setSelectedCompanyIdState(null);
+      setSelectionSource("bootstrap");
+      clearSelectedCompanyState();
+      return;
+    }
     const stored = localStorage.getItem(STORAGE_KEY);
     if (stored && selectableCompanies.some((c) => c.id === stored)) return;
     if (selectedCompanyId && selectableCompanies.some((c) => c.id === selectedCompanyId)) return;
@@ -75,10 +90,14 @@ export function CompanyProvider({ children }: { children: ReactNode }) {
     localStorage.setItem(STORAGE_KEY, next);
   }, [companies, selectedCompanyId, sidebarCompanies]);
 
-  const setSelectedCompanyId = useCallback((companyId: string, options?: CompanySelectionOptions) => {
+  const setSelectedCompanyId = useCallback((companyId: string | null, options?: CompanySelectionOptions) => {
     setSelectedCompanyIdState(companyId);
     setSelectionSource(options?.source ?? "manual");
-    localStorage.setItem(STORAGE_KEY, companyId);
+    if (companyId) {
+      localStorage.setItem(STORAGE_KEY, companyId);
+    } else {
+      clearSelectedCompanyState();
+    }
   }, []);
 
   const reloadCompanies = useCallback(async () => {

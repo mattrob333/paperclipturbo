@@ -80,22 +80,31 @@ export class WorkspaceError extends Error {
 
 export function workspaceService() {
   async function resolveWorkspaceRoot(adapterConfig: Record<string, unknown>): Promise<string | null> {
-    const cwd = adapterConfig?.cwd;
-    if (typeof cwd !== "string" || cwd.trim().length === 0) {
-      return null;
-    }
+    const candidates = [
+      adapterConfig?.cwd,
+      adapterConfig?.workspacePath,
+      adapterConfig?.workspaceRoot,
+      adapterConfig?.openclawWorkspace,
+      adapterConfig?.agentWorkspace,
+      adapterConfig?.instructionsFilePath,
+      adapterConfig?.agentsMdPath,
+    ]
+      .filter((value): value is string => typeof value === "string" && value.trim().length > 0)
+      .map((value) => path.resolve(value.trim()));
 
-    const resolved = path.resolve(cwd.trim());
-    try {
-      const stat = await fsp.stat(resolved);
-      if (!stat.isDirectory()) {
-        return null;
+    for (const candidate of candidates) {
+      const target = path.extname(candidate) ? path.dirname(candidate) : candidate;
+      try {
+        const stat = await fsp.stat(target);
+        if (stat.isDirectory()) {
+          return target;
+        }
+      } catch {
+        // Try next candidate.
       }
-    } catch {
-      return null;
     }
 
-    return resolved;
+    return null;
   }
 
   async function listDirectory(

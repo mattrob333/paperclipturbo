@@ -1,5 +1,6 @@
 import { useState, useEffect } from "react";
 import { useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { useNavigate } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -39,6 +40,7 @@ export function Companies() {
   const { openOnboarding } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const queryClient = useQueryClient();
+  const navigate = useNavigate();
 
   const { data: stats } = useQuery({
     queryKey: queryKeys.companies.stats,
@@ -61,7 +63,18 @@ export function Companies() {
 
   const deleteMutation = useMutation({
     mutationFn: (id: string) => companiesApi.remove(id),
-    onSuccess: () => {
+    onSuccess: (_, deletedCompanyId) => {
+      const remainingCompanies = companies.filter((company) => company.id !== deletedCompanyId);
+      const nextCompany = remainingCompanies[0] ?? null;
+      const nextCompanyId = nextCompany?.id ?? null;
+      if (selectedCompanyId === deletedCompanyId) {
+        setSelectedCompanyId(nextCompanyId);
+        if (nextCompany) {
+          navigate(`/${nextCompany.issuePrefix}/companies`);
+        } else {
+          navigate("/");
+        }
+      }
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
       queryClient.invalidateQueries({ queryKey: queryKeys.companies.stats });
       setConfirmDeleteId(null);

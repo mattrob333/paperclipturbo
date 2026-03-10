@@ -13,3 +13,7 @@ export { sidebarBadgeRoutes } from "./sidebar-badges.js";
 export { llmRoutes } from "./llms.js";
 export { accessRoutes } from "./access.js";
 export { workspaceRoutes } from "./workspace.js";
+export { instanceRoutes } from "./instances.js";
+export { onboardingRoutes } from "./onboarding.js";
+export { experienceRoutes } from "./experience.js";
+export { provisioningRoutes } from "./provisioning.js";

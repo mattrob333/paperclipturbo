@@ -188,6 +188,12 @@ pnpm dev
 
 This starts the API server at `http://localhost:3100`. An embedded PostgreSQL database is created automatically — no setup required.
 
+> **Windows users:** The embedded PostgreSQL binary does not work on Windows. Use Docker PostgreSQL instead:
+> ```bash
+> docker run -d --name paperclip-pg -p 54329:5432 -e POSTGRES_PASSWORD=paperclip postgres:16
+> ```
+> Then set `DATABASE_URL=postgresql://postgres:paperclip@localhost:54329/paperclip` in your `.env` file.
+
 > **Requirements:** Node.js 20+, pnpm 9.15+
 
 <br/>

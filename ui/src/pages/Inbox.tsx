@@ -185,20 +185,13 @@ function FailedRunCard({
   const sourceLabel = RUN_SOURCE_LABELS[run.invocationSource] ?? "Manual";
   const displayError = runFailureMessage(run);
 
-  const retryRun = useMutation({
+  const retryMutation = useMutation({
     mutationFn: async () => {
-      const payload: Record<string, unknown> = {};
-      const context = run.contextSnapshot as Record<string, unknown> | null;
-      if (context) {
-        if (typeof context.issueId === "string" && context.issueId) payload.issueId = context.issueId;
-        if (typeof context.taskId === "string" && context.taskId) payload.taskId = context.taskId;
-        if (typeof context.taskKey === "string" && context.taskKey) payload.taskKey = context.taskKey;
-      }
       const result = await agentsApi.wakeup(run.agentId, {
         source: "on_demand",
         triggerDetail: "manual",
         reason: "retry_failed_run",
-        payload,
+        payload: run.contextSnapshot ?? null,
       });
       if (!("id" in result)) {
         throw new Error("Retry was skipped because the agent is not currently invokable.");
@@ -263,11 +256,11 @@ function FailedRunCard({
               variant="outline"
               size="sm"
               className="h-8 shrink-0 px-2.5"
-              onClick={() => retryRun.mutate()}
-              disabled={retryRun.isPending}
+              onClick={() => retryMutation.mutate()}
+              disabled={retryMutation.isPending}
             >
               <RotateCcw className="mr-1.5 h-3.5 w-3.5" />
-              {retryRun.isPending ? "Retrying…" : "Retry"}
+              {retryMutation.isPending ? "Retrying…" : "Retry"}
             </Button>
             <Button
               type="button"
@@ -292,9 +285,9 @@ function FailedRunCard({
           <span className="font-mono text-muted-foreground">run {run.id.slice(0, 8)}</span>
         </div>
 
-        {retryRun.isError && (
+        {retryMutation.isError && (
           <div className="text-xs text-destructive">
-            {retryRun.error instanceof Error ? retryRun.error.message : "Failed to retry run"}
+            {retryMutation.error instanceof Error ? retryMutation.error.message : "Failed to retry run"}
           </div>
         )}
       </div>

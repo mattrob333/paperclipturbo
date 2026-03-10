@@ -10,7 +10,9 @@ import {
   Network,
   Brain,
   Code2,
+  ClipboardList,
   Settings,
+  Server,
 } from "lucide-react";
 import { useQuery } from "@tanstack/react-query";
 import { SidebarSection } from "./SidebarSection";
@@ -98,9 +100,11 @@ export function Sidebar() {
         <SidebarAgents />
 
         <SidebarSection label="Company">
+          <SidebarNavItem to="/onboarding/start" label="Setup" icon={ClipboardList} />
           <SidebarNavItem to="/org" label="Org" icon={Network} />
           <SidebarNavItem to="/cognitive-blueprint" label="Cognitive Blueprint" icon={Brain} />
           <SidebarNavItem to="/developer-mode" label="Developer Mode" icon={Code2} />
+          <SidebarNavItem to="/instances" label="Instances" icon={Server} />
           <SidebarNavItem to="/costs" label="Costs" icon={DollarSign} />
           <SidebarNavItem to="/activity" label="Activity" icon={History} />
           <SidebarNavItem to="/company/settings" label="Settings" icon={Settings} />

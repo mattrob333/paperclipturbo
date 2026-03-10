@@ -20,5 +20,6 @@ export const companies = pgTable(
   },
   (table) => ({
     issuePrefixUniqueIdx: uniqueIndex("companies_issue_prefix_idx").on(table.issuePrefix),
+    nameUniq: uniqueIndex("companies_name_uniq").on(table.name),
   }),
 );

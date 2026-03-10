@@ -25,6 +25,11 @@ import { llmRoutes } from "./routes/llms.js";
 import { assetRoutes } from "./routes/assets.js";
 import { accessRoutes } from "./routes/access.js";
 import { workspaceRoutes } from "./routes/workspace.js";
+import { instanceRoutes } from "./routes/instances.js";
+import { onboardingRoutes } from "./routes/onboarding.js";
+import { experienceRoutes } from "./routes/experience.js";
+import { provisioningRoutes } from "./routes/provisioning.js";
+import { attachRoutes } from "./routes/attach.js";
 import type { BetterAuthSessionResult } from "./auth/better-auth.js";
 
 type UiMode = "none" | "static" | "vite-dev";
@@ -122,6 +127,11 @@ export async function createApp(
     }),
   );
   api.use(workspaceRoutes(db));
+  api.use("/instances", instanceRoutes(db));
+  api.use("/onboarding", onboardingRoutes(db));
+  api.use("/experience", experienceRoutes(db));
+  api.use("/provisioning", provisioningRoutes(db));
+  api.use("/attach", attachRoutes(db));
   app.use("/api", api);
 
   const __dirname = path.dirname(fileURLToPath(import.meta.url));

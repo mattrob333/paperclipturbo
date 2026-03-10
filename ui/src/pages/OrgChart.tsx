@@ -16,8 +16,7 @@ import {
   X,
   ExternalLink,
 } from "lucide-react";
-import { getAgentCognitiveData, mockAgentCognitiveData } from "@/lib/mockCognitiveData";
-import type { Agent } from "@paperclipai/shared";
+import type { Agent, AgentCognitiveData } from "@paperclipai/shared";
 
 // Layout constants
 const CARD_W = 220;
@@ -162,6 +161,29 @@ const AGENT_DETAIL_TABS = [
   "health",
 ] as const;
 
+function useCompanyCognitiveData(companyId: string | null, agents: Agent[] | undefined) {
+  return useQuery({
+    queryKey: ["agents", companyId, "cognitive-company"],
+    enabled: Boolean(companyId && agents && agents.length > 0),
+    retry: false,
+    queryFn: async () => {
+      const entries = await Promise.all(
+        (agents ?? []).map(async (agent) => {
+          try {
+            const data = await agentsApi.cognitive(agent.id, companyId ?? undefined);
+            return [agent.id, data] as const;
+          } catch {
+            return [agent.id, null] as const;
+          }
+        }),
+      );
+      return new Map<string, AgentCognitiveData>(
+        entries.filter((entry): entry is readonly [string, AgentCognitiveData] => Boolean(entry[1])),
+      );
+    },
+  });
+}
+
 // ── Main component ──────────────────────────────────────────────────────
 
 export function OrgChart() {
@@ -190,6 +212,8 @@ export function OrgChart() {
     return m;
   }, [agents]);
 
+  const { data: cognitiveMap } = useCompanyCognitiveData(selectedCompanyId ?? null, agents);
+
   useEffect(() => {
     setBreadcrumbs([{ label: "Org Chart" }]);
   }, [setBreadcrumbs]);
@@ -211,7 +235,7 @@ export function OrgChart() {
   }, [allNodes]);
 
   // Selected node data
-  const selectedCog = selectedNodeId ? getAgentCognitiveData(selectedNodeId) : null;
+  const selectedCog = selectedNodeId ? cognitiveMap?.get(selectedNodeId) ?? null : null;
   const selectedAgent = selectedNodeId ? agentMap.get(selectedNodeId) : null;
 
   // Pan & zoom state
@@ -402,7 +426,7 @@ export function OrgChart() {
         >
           {allNodes.map((node) => {
             const agent = agentMap.get(node.id);
-            const cog = getAgentCognitiveData(node.id);
+            const cog = cognitiveMap?.get(node.id) ?? null;
             const dotColor = statusDotColor[node.status] ?? defaultDotColor;
             const isSelected = selectedNodeId === node.id;
             const isHovered = hoveredNodeId === node.id;

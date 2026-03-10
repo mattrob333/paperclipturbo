@@ -12,6 +12,17 @@ export class ApiError extends Error {
   }
 }
 
+ async function assertOk(res: Response): Promise<void> {
+   if (!res.ok) {
+     const errorBody = await res.json().catch(() => null);
+     throw new ApiError(
+       (errorBody as { error?: string } | null)?.error ?? `Request failed: ${res.status}`,
+       res.status,
+       errorBody,
+     );
+   }
+ }
+
 async function request<T>(path: string, init?: RequestInit): Promise<T> {
   const headers = new Headers(init?.headers ?? undefined);
   const body = init?.body;
@@ -24,19 +35,29 @@ async function request<T>(path: string, init?: RequestInit): Promise<T> {
     credentials: "include",
     ...init,
   });
-  if (!res.ok) {
-    const errorBody = await res.json().catch(() => null);
-    throw new ApiError(
-      (errorBody as { error?: string } | null)?.error ?? `Request failed: ${res.status}`,
-      res.status,
-      errorBody,
-    );
-  }
+  await assertOk(res);
   return res.json();
 }
 
+ async function requestText(path: string, init?: RequestInit): Promise<string> {
+   const headers = new Headers(init?.headers ?? undefined);
+   const body = init?.body;
+   if (!(body instanceof FormData) && !headers.has("Content-Type")) {
+     headers.set("Content-Type", "application/json");
+   }
+
+   const res = await fetch(`${BASE}${path}`, {
+     headers,
+     credentials: "include",
+     ...init,
+   });
+   await assertOk(res);
+   return res.text();
+ }
+
 export const api = {
   get: <T>(path: string) => request<T>(path),
+  getText: (path: string) => requestText(path),
   post: <T>(path: string, body: unknown) =>
     request<T>(path, { method: "POST", body: JSON.stringify(body) }),
   postForm: <T>(path: string, body: FormData) =>

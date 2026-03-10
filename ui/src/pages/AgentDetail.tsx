@@ -58,7 +58,6 @@ import { Input } from "@/components/ui/input";
 import { AgentIcon, AgentIconPicker } from "../components/AgentIconPicker";
 import { isUuidLike, type Agent, type HeartbeatRun, type HeartbeatRunEvent, type AgentRuntimeState, type LiveEvent } from "@paperclipai/shared";
 import { agentRouteRef } from "../lib/utils";
-import { getAgentCognitiveData } from "../lib/mockCognitiveData";
 import { OverviewTab } from "../components/agent-detail/OverviewTab";
 import { CognitiveOSTab } from "../components/agent-detail/CognitiveOSTab";
 import { SkillChainsTab } from "../components/agent-detail/SkillChainsTab";
@@ -736,7 +735,12 @@ function AgentDetailTabs({
   urlRunId: string | null;
 }) {
   const navigate = useNavigate();
-  const cognitiveData = getAgentCognitiveData(agent.id);
+  const { data: cognitiveData } = useQuery({
+    queryKey: queryKeys.agents.cognitive(agent.id),
+    queryFn: () => agentsApi.cognitive(agent.id, resolvedCompanyId ?? undefined),
+    enabled: Boolean(agent.id),
+    retry: false,
+  });
 
   return (
     <div className="space-y-4">
@@ -752,7 +756,7 @@ function AgentDetailTabs({
                   ? "text-foreground"
                   : "text-muted-foreground hover:text-foreground",
               )}
-              onClick={() => navigate(`/agents/${agentRouteId}/${tab.value === "overview" ? "" : tab.value}`)}
+              onClick={() => navigate(tab.value === "overview" ? `/agents/${agentRouteId}` : `/agents/${agentRouteId}/${tab.value}`)}
             >
               {tab.label}
               {activeView === tab.value && (

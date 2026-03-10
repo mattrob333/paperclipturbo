@@ -2,7 +2,13 @@ import { Router, type Request } from "express";
 import { randomUUID } from "node:crypto";
 import path from "node:path";
 import type { Db } from "@paperclipai/db";
-import { agents as agentsTable, agentConfigRevisions, agentTaskSessions, companies, heartbeatRuns } from "@paperclipai/db";
+import {
+  agents as agentsTable,
+  agentConfigRevisions,
+  agentTaskSessions,
+  companies,
+  heartbeatRuns,
+} from "@paperclipai/db";
 import { and, desc, eq, inArray, not, sql } from "drizzle-orm";
 import {
   createAgentKeySchema,
@@ -39,6 +45,7 @@ import {
 } from "@paperclipai/adapter-codex-local";
 import { DEFAULT_CURSOR_LOCAL_MODEL } from "@paperclipai/adapter-cursor-local";
 import { ensureOpenCodeModelConfiguredAndAvailable } from "@paperclipai/adapter-opencode-local/server";
+import { agentCognitiveService } from "../services/agent-cognitive.js";
 
 export function agentRoutes(db: Db) {
   const DEFAULT_INSTRUCTIONS_PATH_KEYS: Record<string, string> = {
@@ -51,6 +58,7 @@ export function agentRoutes(db: Db) {
 
   const router = Router();
   const svc = agentService(db);
+  const cognitive = agentCognitiveService(db);
   const access = accessService(db);
   const approvalsSvc = approvalService(db);
   const heartbeat = heartbeatService(db);
@@ -550,6 +558,26 @@ export function agentRoutes(db: Db) {
 
     const state = await heartbeat.getRuntimeState(id);
     res.json(state);
+  });
+
+  router.get("/agents/:id/cognitive", async (req, res) => {
+    assertBoard(req);
+    const id = req.params.id as string;
+    const agent = await svc.getById(id);
+    if (!agent) {
+      throw notFound("Agent not found");
+    }
+    assertCompanyAccess(req, agent.companyId);
+
+    const data = await cognitive.getByAgent(id);
+    if (!data) {
+      res.status(404).json({
+        error: "No cognitive workspace data available for this agent",
+        code: "no_cognitive_data",
+      });
+      return;
+    }
+    res.json(data);
   });
 
   router.get("/agents/:id/task-sessions", async (req, res) => {

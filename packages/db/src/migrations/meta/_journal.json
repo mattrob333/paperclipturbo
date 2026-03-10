@@ -183,6 +183,27 @@
       "when": 1772807461603,
       "tag": "0025_nasty_salo",
       "breakpoints": true
+    },
+    {
+      "idx": 26,
+      "version": "7",
+      "when": 1741388400000,
+      "tag": "0026_onboarding_tables",
+      "breakpoints": true
+    },
+    {
+      "idx": 27,
+      "version": "7",
+      "when": 1741474800000,
+      "tag": "0027_build_runs",
+      "breakpoints": true
+    },
+    {
+      "idx": 28,
+      "version": "7",
+      "when": 1741561200000,
+      "tag": "0028_provisioning_jobs",
+      "breakpoints": true
     }
   ]
 }

@@ -8,6 +8,7 @@ export const queryKeys = {
     list: (companyId: string) => ["agents", companyId] as const,
     detail: (id: string) => ["agents", "detail", id] as const,
     runtimeState: (id: string) => ["agents", "runtime-state", id] as const,
+    cognitive: (id: string) => ["agents", "cognitive", id] as const,
     taskSessions: (id: string) => ["agents", "task-sessions", id] as const,
     keys: (agentId: string) => ["agents", "keys", agentId] as const,
     configRevisions: (agentId: string) => ["agents", "config-revisions", agentId] as const,
@@ -71,4 +72,11 @@ export const queryKeys = {
   liveRuns: (companyId: string) => ["live-runs", companyId] as const,
   runIssues: (runId: string) => ["run-issues", runId] as const,
   org: (companyId: string) => ["org", companyId] as const,
+  instances: {
+    all: ["instances"] as const,
+    detail: (companySlug: string) => ["instances", companySlug] as const,
+    blueprint: (companySlug: string) => ["instances", companySlug, "blueprint"] as const,
+    validation: (companySlug: string) => ["instances", companySlug, "validation"] as const,
+    syncStatus: (companySlug: string) => ["instances", companySlug, "sync"] as const,
+  },
 };

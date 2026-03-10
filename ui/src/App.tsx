@@ -1,6 +1,7 @@
 import { useEffect, useRef } from "react";
-import { Navigate, Outlet, Route, Routes, useLocation } from "@/lib/router";
+import { Navigate, Outlet, Route, Routes, useLocation, useNavigate } from "@/lib/router";
 import { useQuery } from "@tanstack/react-query";
+import { provisioningApi } from "./api/provisioning";
 import { Button } from "@/components/ui/button";
 import { Layout } from "./components/Layout";
 import { OnboardingWizard } from "./components/OnboardingWizard";
@@ -26,10 +27,26 @@ import { DesignGuide } from "./pages/DesignGuide";
 import { OrgChart } from "./pages/OrgChart";
 import { CognitiveBlueprint } from "./pages/CognitiveBlueprint";
 import { DeveloperMode } from "./pages/DeveloperMode";
+import { OnboardingDashboard } from "./pages/OnboardingDashboard";
+import { OnboardingProgramDetail } from "./pages/OnboardingProgramDetail";
+import { SponsorIntakePage } from "./pages/SponsorIntakePage";
+import { ParticipantManagement } from "./pages/ParticipantManagement";
+import { DiscoverySprintPage } from "./pages/DiscoverySprintPage";
+import { SynthesisPage } from "./pages/SynthesisPage";
+import { ProposalReviewPage } from "./pages/ProposalReviewPage";
+import { Instances } from "./pages/Instances";
+import { SetupWizard } from "./pages/SetupWizard";
+import OnboardingLanding from "./pages/OnboardingLanding";
+import BuilderMode from "./pages/BuilderMode";
+import BootstrapWizard from "./pages/BootstrapWizard";
+import AttachWizard from "./pages/AttachWizard";
+import OnboardingModeChooser from "./pages/OnboardingModeChooser";
+import ProvisioningProgress from "./pages/ProvisioningProgress";
 import { AuthPage } from "./pages/Auth";
 import { BoardClaimPage } from "./pages/BoardClaim";
 import { InviteLandingPage } from "./pages/InviteLanding";
 import { queryKeys } from "./lib/queryKeys";
+import { experienceApi } from "./api/experience";
 import { useCompany } from "./context/CompanyContext";
 import { useDialog } from "./context/DialogContext";
 
@@ -136,13 +153,56 @@ function boardRoutes() {
       <Route path="inbox/new" element={<Inbox />} />
       <Route path="inbox/all" element={<Inbox />} />
       <Route path="design-guide" element={<DesignGuide />} />
+      <Route path="onboarding" element={<OnboardingDashboard />} />
+      <Route path="onboarding/:programId" element={<OnboardingProgramDetail />} />
+      <Route path="onboarding/:programId/intake" element={<SponsorIntakePage />} />
+      <Route path="onboarding/:programId/participants" element={<ParticipantManagement />} />
+      <Route path="onboarding/:programId/discovery/:participantId" element={<DiscoverySprintPage />} />
+      <Route path="onboarding/:programId/synthesis" element={<SynthesisPage />} />
+      <Route path="onboarding/:programId/proposal" element={<ProposalReviewPage />} />
+      <Route path="onboarding/start" element={<OnboardingLanding />} />
+      <Route path="build/:programId" element={<BuilderMode />} />
+      <Route path="instances" element={<Instances />} />
+      <Route path="instances/wizard" element={<SetupWizard />} />
+      <Route path="instances/wizard/:companySlug" element={<SetupWizard />} />
     </>
   );
+}
+
+function ProvisioningRedirect({ companyId }: { companyId: string }) {
+  const navigate = useNavigate();
+  const { data: job, isLoading, error } = useQuery({
+    queryKey: ["provisioning-company-job", companyId],
+    queryFn: () => provisioningApi.getJobForCompany(companyId),
+  });
+
+  useEffect(() => {
+    if (job?.id) {
+      navigate(`/provisioning/${job.id}`, { replace: true });
+    }
+  }, [job, navigate]);
+
+  if (isLoading) return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading provisioning status...</div>;
+  if (error || !job) return <Navigate to="/bootstrap" replace />;
+  return null;
 }
 
 function CompanyRootRedirect() {
   const { companies, selectedCompany, loading } = useCompany();
   const { onboardingOpen } = useDialog();
+
+  const sidebarCompanies = companies.filter((company) => company.status !== "archived");
+  const targetCompany =
+    (selectedCompany && selectedCompany.status !== "archived" ? selectedCompany : null) ??
+    sidebarCompanies[0] ??
+    null;
+  const targetCompanyId = targetCompany?.id ?? null;
+
+  const { data: experienceState, isLoading: experienceLoading } = useQuery({
+    queryKey: ["experience-state", targetCompanyId],
+    queryFn: () => experienceApi.getState(targetCompanyId!),
+    enabled: !!targetCompanyId,
+  });
 
   if (loading) {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
@@ -153,12 +213,33 @@ function CompanyRootRedirect() {
     return <NoCompaniesStartPage autoOpen={false} />;
   }
 
-  const targetCompany = selectedCompany ?? companies[0] ?? null;
   if (!targetCompany) {
-    return <NoCompaniesStartPage />;
+    return <Navigate to="/get-started" replace />;
   }
 
-  return <Navigate to={`/${targetCompany.issuePrefix}/dashboard`} replace />;
+  // Handle non-active company statuses — redirect to provisioning progress
+  if (targetCompany.status === "provisioning" || targetCompany.status === "draft" || targetCompany.status === "failed") {
+    return <ProvisioningRedirect companyId={targetCompany.id} />;
+  }
+
+  if (experienceLoading) {
+    return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
+  }
+
+  // If experience state query failed, default to setup (not dashboard)
+  if (!experienceState) {
+    return <Navigate to={`/${targetCompany.issuePrefix}/onboarding/start`} replace />;
+  }
+
+  const hasOnboardingPath =
+    typeof experienceState.nextActionPath === "string" &&
+    experienceState.nextActionPath.trim().length > 0;
+
+  if (experienceState.state === "provisioned" && hasOnboardingPath) {
+    return <Navigate to={`/${targetCompany.issuePrefix}/dashboard`} replace />;
+  }
+
+  return <Navigate to={`/${targetCompany.issuePrefix}/onboarding/start`} replace />;
 }
 
 function UnprefixedBoardRedirect() {
@@ -169,7 +250,11 @@ function UnprefixedBoardRedirect() {
     return <div className="mx-auto max-w-xl py-10 text-sm text-muted-foreground">Loading...</div>;
   }
 
-  const targetCompany = selectedCompany ?? companies[0] ?? null;
+  const sidebarCompanies = companies.filter((company) => company.status !== "archived");
+  const targetCompany =
+    (selectedCompany && selectedCompany.status !== "archived" ? selectedCompany : null) ??
+    sidebarCompanies[0] ??
+    null;
   if (!targetCompany) {
     return <NoCompaniesStartPage />;
   }
@@ -231,6 +316,10 @@ export function App() {
           <Route path="projects/:projectId/issues" element={<UnprefixedBoardRedirect />} />
           <Route path="projects/:projectId/issues/:filter" element={<UnprefixedBoardRedirect />} />
           <Route path="developer-mode" element={<UnprefixedBoardRedirect />} />
+          <Route path="get-started" element={<OnboardingModeChooser />} />
+          <Route path="attach" element={<AttachWizard />} />
+          <Route path="bootstrap" element={<BootstrapWizard />} />
+          <Route path="provisioning/:jobId" element={<ProvisioningProgress />} />
           <Route path=":companyPrefix/developer-mode" element={<DeveloperMode />} />
           <Route path=":companyPrefix" element={<Layout />}>
             {boardRoutes()}

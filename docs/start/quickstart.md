@@ -26,6 +26,12 @@ This starts the API server and UI at [http://localhost:3100](http://localhost:31
 
 No external database required — Paperclip uses an embedded PostgreSQL instance by default.
 
+> **Windows users:** The embedded PostgreSQL binary does not work on Windows. Use Docker PostgreSQL instead:
+> ```sh
+> docker run -d --name paperclip-pg -p 54329:5432 -e POSTGRES_PASSWORD=paperclip postgres:16
+> ```
+> Then set `DATABASE_URL=postgresql://postgres:paperclip@localhost:54329/paperclip` in your `.env` file.
+
 ## One-Command Bootstrap
 
 ```sh

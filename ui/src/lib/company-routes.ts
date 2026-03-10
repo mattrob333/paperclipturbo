@@ -3,6 +3,8 @@ const BOARD_ROUTE_ROOTS = new Set([
   "companies",
   "company",
   "org",
+  "onboarding",
+  "cognitive-blueprint",
   "agents",
   "projects",
   "issues",
@@ -13,6 +15,7 @@ const BOARD_ROUTE_ROOTS = new Set([
   "inbox",
   "design-guide",
   "developer-mode",
+  "instances",
 ]);
 
 const GLOBAL_ROUTE_ROOTS = new Set(["auth", "invite", "board-claim", "docs"]);

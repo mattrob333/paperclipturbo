@@ -1,0 +1,12 @@
+{
+  "version": "1.0",
+  "workspace": "{{COMPANY_SLUG}}",
+  "agents": [
+    {
+      "role": "executive_assistant",
+      "name": "Executive Assistant",
+      "folder": "executive_assistant",
+      "enabled": true
+    }
+  ]
+}

@@ -41,7 +41,7 @@ export const portabilityAgentManifestEntrySchema = z.object({
 
 export const portabilityManifestSchema = z.object({
   schemaVersion: z.number().int().positive(),
-  generatedAt: z.string().datetime(),
+  generatedAt: z.string().datetime({ offset: true }),
   source: z
     .object({
       companyId: z.string().uuid(),

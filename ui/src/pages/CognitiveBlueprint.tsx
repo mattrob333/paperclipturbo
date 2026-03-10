@@ -18,10 +18,6 @@ import {
   X,
   ExternalLink,
 } from "lucide-react";
-import {
-  mockAgentCognitiveData,
-  getAgentCognitiveData,
-} from "@/lib/mockCognitiveData";
 import type { Agent } from "@paperclipai/shared";
 import type { AgentCognitiveData, CapabilityTag, DelegationPolicy } from "@paperclipai/shared";
 
@@ -255,6 +251,29 @@ const AGENT_DETAIL_TABS = [
   "health",
 ] as const;
 
+function useCompanyCognitiveData(companyId: string | null, agents: Agent[] | undefined) {
+  return useQuery({
+    queryKey: ["agents", companyId, "cognitive-company-blueprint"],
+    enabled: Boolean(companyId && agents && agents.length > 0),
+    retry: false,
+    queryFn: async () => {
+      const entries = await Promise.all(
+        (agents ?? []).map(async (agent) => {
+          try {
+            const data = await agentsApi.cognitive(agent.id, companyId ?? undefined);
+            return [agent.id, data] as const;
+          } catch {
+            return [agent.id, null] as const;
+          }
+        }),
+      );
+      return new Map<string, AgentCognitiveData>(
+        entries.filter((entry): entry is readonly [string, AgentCognitiveData] => Boolean(entry[1])),
+      );
+    },
+  });
+}
+
 // ---------------------------------------------------------------------------
 // Component
 // ---------------------------------------------------------------------------
@@ -285,6 +304,8 @@ export function CognitiveBlueprint() {
     return m;
   }, [agents]);
 
+  const { data: cognitiveMap } = useCompanyCognitiveData(selectedCompanyId ?? null, agents);
+
   useEffect(() => {
     setBreadcrumbs([{ label: "Cognitive Blueprint" }]);
   }, [setBreadcrumbs]);
@@ -307,8 +328,8 @@ export function CognitiveBlueprint() {
 
   // Relationship edges
   const relEdges = useMemo(
-    () => computeRelEdges(viewMode, mockAgentCognitiveData),
-    [viewMode],
+    () => computeRelEdges(viewMode, Array.from(cognitiveMap?.values() ?? [])),
+    [viewMode, cognitiveMap],
   );
 
   // Resolve rel edge coordinates
@@ -320,7 +341,7 @@ export function CognitiveBlueprint() {
 
   // Selected cognitive data
   const selectedCog = selectedNodeId
-    ? getAgentCognitiveData(selectedNodeId)
+    ? cognitiveMap?.get(selectedNodeId) ?? null
     : null;
   const selectedAgent = selectedNodeId ? agentMap.get(selectedNodeId) : null;
 
@@ -650,7 +671,7 @@ export function CognitiveBlueprint() {
           >
             {allNodes.map((node) => {
               const agent = agentMap.get(node.id);
-              const cog = getAgentCognitiveData(node.id);
+              const cog = cognitiveMap?.get(node.id) ?? null;
               const dotColor =
                 statusDotColor[node.status] ?? "#a3a3a3";
               const isSelected = selectedNodeId === node.id;
@@ -846,9 +867,7 @@ export function CognitiveBlueprint() {
                   {selectedCog.delegationPolicies
                     .filter((dp: DelegationPolicy) => dp.delegateTo)
                     .map((dp: DelegationPolicy) => {
-                      const target = mockAgentCognitiveData.find(
-                        (a) => a.agentId === dp.delegateTo,
-                      );
+                      const target = dp.delegateTo ? cognitiveMap?.get(dp.delegateTo) ?? null : null;
                       return (
                         <div
                           key={dp.id}
@@ -881,9 +900,7 @@ export function CognitiveBlueprint() {
                   {selectedCog.delegationPolicies
                     .filter((dp: DelegationPolicy) => dp.escalateTo)
                     .map((dp: DelegationPolicy) => {
-                      const target = mockAgentCognitiveData.find(
-                        (a) => a.agentId === dp.escalateTo,
-                      );
+                      const target = dp.escalateTo ? cognitiveMap?.get(dp.escalateTo) ?? null : null;
                       return (
                         <div
                           key={dp.id}

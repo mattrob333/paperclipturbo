@@ -60,11 +60,32 @@ type AdapterType =
   | "http"
   | "openclaw";
 
-const DEFAULT_TASK_DESCRIPTION = `Setup yourself as the CEO. Use the ceo persona found here: [https://github.com/paperclipai/companies/blob/main/default/ceo/AGENTS.md](https://github.com/paperclipai/companies/blob/main/default/ceo/AGENTS.md)
+const DEFAULT_TASK_DESCRIPTION = `Set up the Executive Assistant as the primary point of contact for this workspace.
 
-Ensure you have a folder agents/ceo and then download this AGENTS.md as well as the sibling HEARTBEAT.md, SOUL.md, and TOOLS.md. and set that AGENTS.md as the path to your agents instruction file
+ This agent should be the front-door operator the human user talks to most often. In solo mode, that means the builder is setting up this assistant for themself. In client or consulting mode, it should represent the primary sponsor or operating lead you want to train on the system first.
 
-And after you've finished that, hire yourself a Founding Engineer agent`;
+ Start by defining the assistant's operating role, responsibilities, and working style inside the OpenClaw workspace. Then prepare the next specialist agents this assistant should coordinate with based on the initial use case.`;
+
+const DEFAULT_PRIMARY_AGENT_NAME = "Executive Assistant";
+const DEFAULT_PRIMARY_AGENT_ROLE = "executive_assistant";
+const DEFAULT_PRIMARY_TASK_TITLE = "Define the Executive Assistant's operating brief";
+
+const DEFAULT_OPENCLAW_WORKSPACE = "/openclaw-workspace";
+const DEFAULT_OPENCLAW_GATEWAY_URL = "http://host.docker.internal:18789/v1/responses";
+
+function normalizeOpenClawGatewayUrl(rawValue: string): string {
+  const trimmed = rawValue.trim();
+  if (!trimmed) return DEFAULT_OPENCLAW_GATEWAY_URL;
+  try {
+    const parsed = new URL(trimmed);
+    if (!parsed.pathname || parsed.pathname === "/") {
+      parsed.pathname = "/v1/responses";
+    }
+    return parsed.toString();
+  } catch {
+    return trimmed;
+  }
+}
 
 export function OnboardingWizard() {
   const { onboardingOpen, onboardingOptions, closeOnboarding } = useDialog();
@@ -86,8 +107,8 @@ export function OnboardingWizard() {
   const [companyGoal, setCompanyGoal] = useState("");
 
   // Step 2
-  const [agentName, setAgentName] = useState("CEO");
-  const [adapterType, setAdapterType] = useState<AdapterType>("claude_local");
+  const [agentName, setAgentName] = useState(DEFAULT_PRIMARY_AGENT_NAME);
+  const [adapterType, setAdapterType] = useState<AdapterType>("openclaw");
   const [cwd, setCwd] = useState("");
   const [model, setModel] = useState("");
   const [command, setCommand] = useState("");
@@ -108,7 +129,7 @@ export function OnboardingWizard() {
   const [inlineSecretOpen, setInlineSecretOpen] = useState(false);
 
   // Step 3
-  const [taskTitle, setTaskTitle] = useState("Create your CEO HEARTBEAT.md");
+  const [taskTitle, setTaskTitle] = useState(DEFAULT_PRIMARY_TASK_TITLE);
   const [taskDescription, setTaskDescription] = useState(
     DEFAULT_TASK_DESCRIPTION
   );
@@ -267,8 +288,8 @@ export function OnboardingWizard() {
     setError(null);
     setCompanyName("");
     setCompanyGoal("");
-    setAgentName("CEO");
-    setAdapterType("claude_local");
+    setAgentName(DEFAULT_PRIMARY_AGENT_NAME);
+    setAdapterType("openclaw");
     setCwd("");
     setModel("");
     setCommand("");
@@ -283,7 +304,7 @@ export function OnboardingWizard() {
     setInlineSecretName("");
     setInlineSecretValue("");
     setInlineSecretOpen(false);
-    setTaskTitle("Create your CEO HEARTBEAT.md");
+    setTaskTitle(DEFAULT_PRIMARY_TASK_TITLE);
     setTaskDescription(DEFAULT_TASK_DESCRIPTION);
     setCreatedCompanyId(null);
     setCreatedCompanyPrefix(null);
@@ -307,7 +328,7 @@ export function OnboardingWizard() {
           ? model || DEFAULT_CODEX_LOCAL_MODEL
           : adapterType === "cursor"
             ? model || DEFAULT_CURSOR_LOCAL_MODEL
-          : model,
+            : model,
       command,
       args,
       url,
@@ -317,7 +338,25 @@ export function OnboardingWizard() {
           ? DEFAULT_CODEX_LOCAL_BYPASS_APPROVALS_AND_SANDBOX
           : defaultCreateValues.dangerouslyBypassSandbox
     });
-    // Inject secret reference for API key if selected
+
+    if (adapterType === "openclaw") {
+      const workspaceRoot = cwd.trim() || DEFAULT_OPENCLAW_WORKSPACE;
+      const normalizedAgentSlug =
+        agentName.trim().toLowerCase().replace(/[^a-z0-9]+/g, "_").replace(/^_+|_+$/g, "") ||
+        DEFAULT_PRIMARY_AGENT_ROLE;
+      const pathSeparator = workspaceRoot.includes("\\") ? "\\" : "/";
+      const normalizedWorkspaceRoot = workspaceRoot.replace(/[\\/]+$/, "");
+      const agentWorkspace = `${normalizedWorkspaceRoot}${pathSeparator}${normalizedAgentSlug}`;
+
+      config.url = normalizeOpenClawGatewayUrl(url);
+      config.workspacePath = agentWorkspace;
+      config.workspaceRoot = agentWorkspace;
+      config.openclawWorkspace = agentWorkspace;
+      config.cwd = agentWorkspace;
+      config.instructionsFilePath = `${agentWorkspace}${pathSeparator}SOUL.md`;
+      config.agentsMdPath = `${agentWorkspace}${pathSeparator}AGENTS.md`;
+    }
+
     if (selectedSecretId) {
       const env =
         typeof config.env === "object" &&
@@ -335,6 +374,7 @@ export function OnboardingWizard() {
       }
       config.env = env;
     }
+
     if (adapterType === "claude_local" && forceUnsetAnthropicApiKey) {
       const env =
         typeof config.env === "object" &&
@@ -390,7 +430,9 @@ export function OnboardingWizard() {
       if (!companyId) {
         // Check if a company with this name already exists (idempotency)
         const existing = companies.find(
-          (c) => c.name.trim().toLowerCase() === companyName.trim().toLowerCase()
+          (c) =>
+            c.status !== "archived" &&
+            c.name.trim().toLowerCase() === companyName.trim().toLowerCase()
         );
         if (existing) {
           companyId = existing.id;
@@ -463,16 +505,47 @@ export function OnboardingWizard() {
         }
       }
 
+      if (adapterType === "openclaw") {
+        const gatewayUrl = normalizeOpenClawGatewayUrl(url);
+        try {
+          new URL(gatewayUrl);
+        } catch {
+          setError("Invalid OpenClaw gateway URL. Please enter a valid URL (e.g. http://host.docker.internal:18789).");
+          return;
+        }
+        // Quick connectivity check — just verify the URL is reachable
+        try {
+          const controller = new AbortController();
+          const timeoutId = setTimeout(() => controller.abort(), 5000);
+          await fetch(gatewayUrl, {
+            method: "HEAD",
+            signal: controller.signal,
+            mode: "no-cors",
+          }).finally(() => clearTimeout(timeoutId));
+        } catch (err) {
+          // no-cors fetch will throw on network errors but succeed on any response
+          if (err instanceof DOMException && err.name === "AbortError") {
+            setError(`Cannot reach OpenClaw gateway at ${gatewayUrl}. Check that the gateway is running and accessible.`);
+            return;
+          }
+          // Other fetch errors in no-cors mode are expected (opaque response), so continue
+        }
+      }
+
       if (isLocalAdapter) {
         const result = adapterEnvResult ?? (await runAdapterEnvironmentTest());
         if (!result) return;
+        if (result.status === "fail") {
+          setError("Fix the adapter validation errors before continuing.");
+          return;
+        }
       }
 
       // Idempotency: if agent was already created (e.g. retry), skip creation
       if (!createdAgentId) {
         const agent = await agentsApi.create(createdCompanyId, {
           name: agentName.trim(),
-          role: "ceo",
+          role: DEFAULT_PRIMARY_AGENT_ROLE,
           adapterType,
           adapterConfig: buildAdapterConfig(),
           runtimeConfig: {
@@ -718,7 +791,7 @@ export function OnboardingWizard() {
                     </label>
                     <input
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                      placeholder="CEO"
+                      placeholder={DEFAULT_PRIMARY_AGENT_NAME}
                       value={agentName}
                       onChange={(e) => setAgentName(e.target.value)}
                       autoFocus
@@ -730,34 +803,35 @@ export function OnboardingWizard() {
                     <label className="text-xs text-muted-foreground mb-2 block">
                       Adapter type
                     </label>
+                    <p className="mb-3 text-[11px] text-muted-foreground">
+                      For this setup flow, start with <span className="font-medium text-foreground">OpenClaw</span> as the runtime workspace. You can still use Claude, Codex, Cursor, or OpenCode later, but this path is optimized for provisioning a workspace-backed company first.
+                    </p>
                     <div className="grid grid-cols-2 gap-2">
                       {[
+                        {
+                          value: "openclaw" as const,
+                          label: "OpenClaw",
+                          icon: Bot,
+                          desc: "Primary runtime workspace for setup",
+                          recommended: true
+                        },
                         {
                           value: "claude_local" as const,
                           label: "Claude Code",
                           icon: Sparkles,
-                          desc: "Local Claude agent",
-                          recommended: true
+                          desc: "Use Claude alongside the OpenClaw workspace"
                         },
                         {
                           value: "codex_local" as const,
                           label: "Codex",
                           icon: Code,
-                          desc: "Local Codex agent",
-                          recommended: true
+                          desc: "Alternative local coding agent"
                         },
                         {
                           value: "opencode_local" as const,
                           label: "OpenCode",
                           icon: OpenCodeLogoIcon,
                           desc: "Local multi-provider agent"
-                        },
-                        {
-                          value: "openclaw" as const,
-                          label: "OpenClaw",
-                          icon: Bot,
-                          desc: "Notify OpenClaw webhook",
-                          comingSoon: true
                         },
                         {
                           value: "cursor" as const,
@@ -795,6 +869,12 @@ export function OnboardingWizard() {
                             if (opt.comingSoon) return;
                             const nextType = opt.value as AdapterType;
                             setAdapterType(nextType);
+                            if (nextType === "openclaw" && !cwd) {
+                              setCwd(DEFAULT_OPENCLAW_WORKSPACE);
+                            }
+                            if (nextType === "openclaw" && !url) {
+                              setUrl(DEFAULT_OPENCLAW_GATEWAY_URL);
+                            }
                             if (nextType === "codex_local" && !model) {
                               setModel(DEFAULT_CODEX_LOCAL_MODEL);
                             } else if (nextType === "cursor" && !model) {
@@ -825,6 +905,62 @@ export function OnboardingWizard() {
                   </div>
 
                   {/* Conditional adapter fields */}
+                  {adapterType === "openclaw" && (
+                    <div className="space-y-3 rounded-md border border-border p-3">
+                      <div>
+                        <div className="flex items-center gap-1.5 mb-1">
+                          <label className="text-xs text-muted-foreground">
+                            OpenClaw workspace root
+                          </label>
+                          <HintIcon text="Point this at the host-mounted OpenClaw workspace directory so Paperclip can inspect and coordinate the generated agent folders." />
+                        </div>
+                        <div className="flex items-center gap-2 rounded-md border border-border px-2.5 py-1.5">
+                          <FolderOpen className="h-3.5 w-3.5 text-muted-foreground shrink-0" />
+                          <input
+                            className="w-full bg-transparent outline-none text-sm font-mono placeholder:text-muted-foreground/50"
+                            placeholder={DEFAULT_OPENCLAW_WORKSPACE}
+                            value={cwd}
+                            onChange={(e) => setCwd(e.target.value)}
+                          />
+                          <ChoosePathButton />
+                        </div>
+                      </div>
+
+                      <div className="rounded-md border border-blue-300/40 bg-blue-50/40 dark:border-blue-900/40 dark:bg-blue-950/20 px-3 py-2 text-[11px] text-blue-900 dark:text-blue-100">
+                        <p className="font-medium">Recommended setup path</p>
+                        <p className="mt-1 text-blue-800/90 dark:text-blue-100/80">
+                          Use OpenClaw as the primary runtime workspace, then add your <span className="font-mono">ANTHROPIC_API_KEY</span> below so Claude can help inspect, validate, and complete the setup flow.
+                        </p>
+                      </div>
+
+                      <div className="rounded-md border border-amber-300/50 bg-amber-50/40 dark:border-amber-900/40 dark:bg-amber-950/20 px-3 py-2 text-[11px] text-amber-950 dark:text-amber-100 space-y-2">
+                        <p className="font-medium">Connecting OpenClaw from Docker</p>
+                        <p className="text-amber-900/90 dark:text-amber-100/80">
+                          If Paperclip is running in Docker, this path must be a workspace location the Paperclip container can actually see. If Developer Mode shows no files, the most common cause is that the OpenClaw workspace is not mounted into the container at the path you entered here.
+                        </p>
+                        <div className="space-y-1 text-amber-900/90 dark:text-amber-100/80">
+                          <p>
+                            - Gateway URL: use the OpenClaw endpoint reachable from the Paperclip container or browser. Local default is <span className="font-mono">http://127.0.0.1:18789</span>, but in Docker this may need to be a container hostname or mapped host URL.
+                          </p>
+                          <p>
+                            - Workspace path: enter the mounted path visible to Paperclip, not just the host-machine path, if those differ.
+                          </p>
+                          <p>
+                            - Developer Mode files: the file tree only appears when the selected agent&apos;s <span className="font-mono">workspacePath</span>/<span className="font-mono">cwd</span> resolves to a real directory the server can read.
+                          </p>
+                        </div>
+                        <a
+                          className="inline-flex text-[11px] underline underline-offset-2 hover:no-underline"
+                          href="/developer-mode"
+                          target="_blank"
+                          rel="noreferrer"
+                        >
+                          Open Developer Mode to verify whether the workspace is readable
+                        </a>
+                      </div>
+                    </div>
+                  )}
+
                   {(adapterType === "claude_local" ||
                     adapterType === "codex_local" ||
                     adapterType === "opencode_local" ||
@@ -941,14 +1077,16 @@ export function OnboardingWizard() {
                   )}
 
                   {/* API Key / Secret Reference */}
-                  {isLocalAdapter && (
+                  {(isLocalAdapter || adapterType === "openclaw") && (
                     <div className="space-y-2 rounded-md border border-border p-3">
                       <div className="flex items-center gap-2">
                         <Key className="h-3.5 w-3.5 text-muted-foreground" />
-                        <p className="text-xs font-medium">API Key (optional)</p>
+                        <p className="text-xs font-medium">Credentials</p>
                       </div>
                       <p className="text-[11px] text-muted-foreground">
-                        {adapterType === "claude_local"
+                        {adapterType === "openclaw"
+                          ? "OpenClaw itself uses the mounted workspace, but Claude-assisted setup still benefits from an ANTHROPIC_API_KEY secret so Paperclip can help you configure and inspect the system."
+                          : adapterType === "claude_local"
                           ? "If you use CLI login (claude login), no API key is needed. Add one only for direct API access."
                           : adapterType === "opencode_local"
                             ? "OpenCode providers need API keys. Select an existing secret or create one."
@@ -961,7 +1099,7 @@ export function OnboardingWizard() {
                           onChange={(e) => setSelectedSecretId(e.target.value || null)}
                         >
                           <option value="">
-                            {adapterType === "claude_local" ? "None (use CLI login)" : "None"}
+                            {adapterType === "claude_local" ? "None (use CLI login)" : adapterType === "openclaw" ? "None yet" : "None"}
                           </option>
                           {availableSecrets.map((s) => (
                             <option key={s.id} value={s.id}>
@@ -982,7 +1120,9 @@ export function OnboardingWizard() {
                           onClick={() => {
                             setInlineSecretOpen(true);
                             setInlineSecretName(
-                              adapterType === "claude_local"
+                              adapterType === "openclaw"
+                                ? "ANTHROPIC_API_KEY"
+                                : adapterType === "claude_local"
                                 ? "ANTHROPIC_API_KEY"
                                 : adapterType === "opencode_local"
                                   ? "OPENAI_API_KEY"
@@ -1100,7 +1240,7 @@ export function OnboardingWizard() {
                         <div className="rounded-md border border-amber-300/60 bg-amber-50/40 px-2.5 py-2 space-y-2">
                           <p className="text-[11px] text-amber-900/90 leading-relaxed">
                             Claude failed while <span className="font-mono">ANTHROPIC_API_KEY</span> is set.
-                            You can clear it in this CEO adapter config and retry the probe.
+                            You can clear it in this agent adapter config and retry the probe.
                           </p>
                           <Button
                             size="sm"
@@ -1190,7 +1330,7 @@ export function OnboardingWizard() {
                       </label>
                       <input
                         className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm font-mono outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                        placeholder="https://..."
+                        placeholder={adapterType === "openclaw" ? DEFAULT_OPENCLAW_GATEWAY_URL : "https://..."}
                         value={url}
                         onChange={(e) => setUrl(e.target.value)}
                       />
@@ -1206,10 +1346,9 @@ export function OnboardingWizard() {
                       <ListTodo className="h-5 w-5 text-muted-foreground" />
                     </div>
                     <div>
-                      <h3 className="font-medium">Give it something to do</h3>
+                      <h3 className="font-medium">Define the primary operator</h3>
                       <p className="text-xs text-muted-foreground">
-                        Give your agent a small task to start with — a bug fix,
-                        a research question, writing a script.
+                        Capture how this Executive Assistant should operate as the primary point of contact for the workspace.
                       </p>
                     </div>
                   </div>
@@ -1219,7 +1358,7 @@ export function OnboardingWizard() {
                     </label>
                     <input
                       className="w-full rounded-md border border-border bg-transparent px-3 py-2 text-sm outline-none focus:ring-1 focus:ring-ring placeholder:text-muted-foreground/50"
-                      placeholder="e.g. Research competitor pricing"
+                      placeholder={DEFAULT_PRIMARY_TASK_TITLE}
                       value={taskTitle}
                       onChange={(e) => setTaskTitle(e.target.value)}
                       autoFocus

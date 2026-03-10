@@ -7,6 +7,7 @@ import { issuesApi } from "../api/issues";
 import { agentsApi } from "../api/agents";
 import { projectsApi } from "../api/projects";
 import { heartbeatsApi } from "../api/heartbeats";
+import { provisioningApi } from "../api/provisioning";
 import { useCompany } from "../context/CompanyContext";
 import { useDialog } from "../context/DialogContext";
 import { useBreadcrumbs } from "../context/BreadcrumbContext";
@@ -19,7 +20,7 @@ import { ActivityRow } from "../components/ActivityRow";
 import { Identity } from "../components/Identity";
 import { timeAgo } from "../lib/timeAgo";
 import { cn, formatCents } from "../lib/utils";
-import { Bot, CircleDot, DollarSign, ShieldCheck, LayoutDashboard } from "lucide-react";
+import { AlertCircle, Bot, CircleDot, DollarSign, FolderOpen, Loader2, Server, ShieldCheck, Tag, LayoutDashboard } from "lucide-react";
 import { ActiveAgentsPanel } from "../components/ActiveAgentsPanel";
 import { ChartCard, RunActivityChart, PriorityChart, IssueStatusChart, SuccessRateChart } from "../components/ActivityCharts";
 import { PageSkeleton } from "../components/PageSkeleton";
@@ -37,7 +38,7 @@ function getRecentIssues(issues: Issue[]): Issue[] {
 }
 
 export function Dashboard() {
-  const { selectedCompanyId, companies } = useCompany();
+  const { selectedCompanyId, selectedCompany, companies } = useCompany();
   const { openOnboarding } = useDialog();
   const { setBreadcrumbs } = useBreadcrumbs();
   const [animatedActivityIds, setAnimatedActivityIds] = useState<Set<string>>(new Set());
@@ -84,6 +85,24 @@ export function Dashboard() {
     queryFn: () => heartbeatsApi.list(selectedCompanyId!),
     enabled: !!selectedCompanyId,
   });
+
+  const { data: provJob } = useQuery({
+    queryKey: ["provisioning-job", selectedCompanyId],
+    queryFn: () => provisioningApi.getJobForCompany(selectedCompanyId!),
+    enabled: !!selectedCompanyId,
+  });
+
+  const provisioningMode = useMemo(() => {
+    if (!provJob) return null;
+    return provJob.provisioningMode === "attach" ? "Attached" : "New Setup";
+  }, [provJob]);
+
+  const runtimeModeLabel = useMemo(() => {
+    if (!provJob) return null;
+    if (provJob.runtimeMode === "shared") return "Shared Runtime";
+    if (provJob.runtimeMode === "dedicated") return "Dedicated Runtime";
+    return null;
+  }, [provJob]);
 
   const recentIssues = issues ? getRecentIssues(issues) : [];
   const recentActivity = useMemo(() => (activity ?? []).slice(0, 10), [activity]);
@@ -188,6 +207,46 @@ export function Dashboard() {
     return <PageSkeleton variant="dashboard" />;
   }
 
+  // Non-active companies: show status banner only, not the full dashboard
+  if (selectedCompany && (selectedCompany.status === "provisioning" || selectedCompany.status === "draft" || selectedCompany.status === "failed")) {
+    return (
+      <div className="space-y-6">
+        {(selectedCompany.status === "provisioning" || selectedCompany.status === "draft") && (
+          <div className="rounded-lg border border-blue-200 dark:border-blue-800 bg-blue-50 dark:bg-blue-950/30 p-6">
+            <div className="flex items-center gap-3">
+              <Loader2 className="h-5 w-5 animate-spin text-blue-600 dark:text-blue-400" />
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-blue-900 dark:text-blue-100">Company setup in progress</h3>
+                <p className="text-xs text-blue-700 dark:text-blue-300 mt-0.5">
+                  Registering your company and generating agent configurations. This may take a moment.
+                </p>
+              </div>
+              <Link to="/bootstrap" className="text-sm font-medium text-blue-700 dark:text-blue-300 hover:underline">
+                View Details
+              </Link>
+            </div>
+          </div>
+        )}
+        {selectedCompany.status === "failed" && (
+          <div className="rounded-lg border border-red-200 dark:border-red-800 bg-red-50 dark:bg-red-950/30 p-6">
+            <div className="flex items-center gap-3">
+              <AlertCircle className="h-5 w-5 text-red-600 dark:text-red-400" />
+              <div className="flex-1">
+                <h3 className="text-sm font-medium text-red-900 dark:text-red-100">Provisioning failed</h3>
+                <p className="text-xs text-red-700 dark:text-red-300 mt-0.5">
+                  There was an error setting up this company. View provisioning details to retry.
+                </p>
+              </div>
+              <Link to="/bootstrap" className="text-sm font-medium text-red-700 dark:text-red-300 hover:underline">
+                View Details
+              </Link>
+            </div>
+          </div>
+        )}
+      </div>
+    );
+  }
+
   const hasNoAgents = agents !== undefined && agents.length === 0;
 
   return (
@@ -212,6 +271,45 @@ export function Dashboard() {
       )}
 
       <ActiveAgentsPanel companyId={selectedCompanyId!} />
+
+      {provJob && (provJob.gatewayUrl || provJob.workspacePath) && (
+        <div className="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-md border border-border bg-muted/30 px-4 py-2 text-xs text-muted-foreground">
+          {provJob.gatewayUrl && (
+            <span className="flex items-center gap-1.5">
+              <Server className="h-3.5 w-3.5 shrink-0" />
+              <span>Gateway:</span>
+              <span className="font-mono">{provJob.gatewayUrl}</span>
+            </span>
+          )}
+          {provJob.gatewayUrl && provJob.workspacePath && (
+            <span className="hidden sm:inline text-border">|</span>
+          )}
+          {provJob.workspacePath && (
+            <span className="flex items-center gap-1.5">
+              <FolderOpen className="h-3.5 w-3.5 shrink-0" />
+              <span>Workspace:</span>
+              <span className="font-mono">{provJob.workspacePath}</span>
+            </span>
+          )}
+          {provisioningMode && (
+            <>
+              <span className="hidden sm:inline text-border">|</span>
+              <span className="flex items-center gap-1.5">
+                <Tag className="h-3.5 w-3.5 shrink-0" />
+                <span>{provisioningMode}</span>
+              </span>
+            </>
+          )}
+          {runtimeModeLabel && (
+            <>
+              <span className="hidden sm:inline text-border">|</span>
+              <span className="flex items-center gap-1.5">
+                <span>{runtimeModeLabel}</span>
+              </span>
+            </>
+          )}
+        </div>
+      )}
 
       {data && (
         <>

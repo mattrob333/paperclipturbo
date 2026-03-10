@@ -1,6 +1,10 @@
-import { ChevronsUpDown, Plus, Settings } from "lucide-react";
+import { useMutation, useQueryClient } from "@tanstack/react-query";
+import { Archive, ChevronsUpDown, Plus, Settings } from "lucide-react";
 import { Link } from "@/lib/router";
 import { useCompany } from "../context/CompanyContext";
+import { companiesApi } from "../api/companies";
+import { queryKeys } from "../lib/queryKeys";
+import { cn } from "../lib/utils";
 import {
   DropdownMenu,
   DropdownMenuContent,
@@ -15,8 +19,13 @@ function statusDotColor(status?: string): string {
   switch (status) {
     case "active":
       return "bg-green-400";
+    case "provisioning":
+    case "draft":
+      return "bg-blue-400";
     case "paused":
       return "bg-yellow-400";
+    case "failed":
+      return "bg-red-400";
     case "archived":
       return "bg-neutral-400";
     default:
@@ -25,8 +34,30 @@ function statusDotColor(status?: string): string {
 }
 
 export function CompanySwitcher() {
-  const { companies, selectedCompany, setSelectedCompanyId } = useCompany();
-  const sidebarCompanies = companies.filter((company) => company.status !== "archived");
+  const { companies, selectedCompany, selectedCompanyId, setSelectedCompanyId } = useCompany();
+  const queryClient = useQueryClient();
+  const sidebarCompanies = companies.filter((company) => company.status !== "archived" && company.status !== "draft");
+
+  const archiveMutation = useMutation({
+    mutationFn: ({ companyId, nextCompanyId }: { companyId: string; nextCompanyId: string | null }) =>
+      companiesApi.archive(companyId).then(() => ({ nextCompanyId })),
+    onSuccess: async ({ nextCompanyId }) => {
+      setSelectedCompanyId(nextCompanyId);
+      await queryClient.invalidateQueries({ queryKey: queryKeys.companies.all });
+      await queryClient.invalidateQueries({ queryKey: queryKeys.companies.stats });
+    },
+  });
+
+  function handleArchiveCurrentCompany() {
+    if (!selectedCompany || !selectedCompanyId) return;
+    const confirmed = window.confirm(
+      `Archive company "${selectedCompany.name}"? It will be hidden from the sidebar.`
+    );
+    if (!confirmed) return;
+    const nextCompanyId =
+      sidebarCompanies.find((company) => company.id !== selectedCompanyId)?.id ?? null;
+    archiveMutation.mutate({ companyId: selectedCompanyId, nextCompanyId });
+  }
 
   return (
     <DropdownMenu>
@@ -57,6 +88,16 @@ export function CompanySwitcher() {
           >
             <span className={`h-2 w-2 rounded-full shrink-0 mr-2 ${statusDotColor(company.status)}`} />
             <span className="truncate">{company.name}</span>
+            {(company.status === "provisioning" || company.status === "draft" || company.status === "failed") && (
+              <span className={cn(
+                "ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded",
+                company.status === "failed"
+                  ? "bg-red-100 dark:bg-red-900/30 text-red-700 dark:text-red-300"
+                  : "bg-blue-100 dark:bg-blue-900/30 text-blue-700 dark:text-blue-300"
+              )}>
+                {company.status === "failed" ? "Failed" : "Setting up"}
+              </span>
+            )}
           </DropdownMenuItem>
         ))}
         {sidebarCompanies.length === 0 && (
@@ -68,6 +109,13 @@ export function CompanySwitcher() {
             <Settings className="h-4 w-4 mr-2" />
             Company Settings
           </Link>
+        </DropdownMenuItem>
+        <DropdownMenuItem
+          disabled={!selectedCompany || archiveMutation.isPending || selectedCompany.status === "archived"}
+          onClick={handleArchiveCurrentCompany}
+        >
+          <Archive className="h-4 w-4 mr-2" />
+          {archiveMutation.isPending ? "Archiving..." : "Archive Current Company"}
         </DropdownMenuItem>
         <DropdownMenuItem asChild>
           <Link to="/companies" className="no-underline text-inherit">
